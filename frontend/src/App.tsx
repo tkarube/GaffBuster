@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, ReferenceLine } from 'recharts';
 import './App.css';
 
 // --- Types ---
@@ -169,6 +169,7 @@ function App() {
     socket.onopen = () => {
       console.log('WebSocket Connected');
       socket.send(JSON.stringify({ type: 'uci' }));
+      socket.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
     };
     socket.onclose = () => {
       console.log('WebSocket Disconnected');
@@ -359,7 +360,8 @@ function App() {
   };
 
   const currentMoveQuality = graphData[currentIndex]?.quality;
-  const getQualityLabel = (q: string) => {
+  const getQualityLabel = (q: string | undefined) => {
+    if (!q) return null;
     const isUser = userColorRef.current === (currentIndex % 2 !== 0 ? 'w' : 'b');
     const colorLabel = (currentIndex % 2 !== 0) ? 'W' : 'B';
     const prefix = isUser ? '' : `(${colorLabel}) `;
@@ -375,15 +377,18 @@ function App() {
   };
   const qualityInfo = getQualityLabel(currentMoveQuality);
 
-  const filteredCandidates = candidates.filter((c, i) => {
-    if (i === 0) return true;
-    const bestScore = parseFloat(candidates[0].score);
-    const currentScore = parseFloat(c.score);
-    if (isNaN(bestScore) || isNaN(currentScore)) return true;
-    const isWhiteTurn = fen.includes(' w ');
-    const diff = isWhiteTurn ? (bestScore - currentScore) : (currentScore - bestScore);
-    return diff <= 1.0;
-  });
+  const filteredCandidates = useMemo(() => {
+    if (candidates.length === 0) return [];
+    return candidates.filter((c, i) => {
+      if (i === 0) return true;
+      const bestScore = parseFloat(candidates[0].score);
+      const currentScore = parseFloat(c.score);
+      if (isNaN(bestScore) || isNaN(currentScore)) return true;
+      const isWhiteTurn = fen.includes(' w ');
+      const diff = isWhiteTurn ? (bestScore - currentScore) : (currentScore - bestScore);
+      return diff <= 1.0;
+    });
+  }, [candidates, fen]);
 
   return (
     <div className="container">
@@ -396,27 +401,32 @@ function App() {
               <Chessboard position={fen} boardOrientation={boardOrientation}
                 onPieceDrop={(s, t) => {
                   const game = new Chess(fen);
-                  const move = game.move({ from: s, to: t, promotion: 'q' });
-                  if (move) {
-                    const nextFens = allFens.slice(0, currentIndex + 1);
-                    nextFens.push(game.fen());
-                    setAllFens(nextFens);
-                    const nextMoveSqs = lastMoveSquares.slice(0, currentIndex + 1);
-                    nextMoveSqs.push({ from: s, to: t });
-                    setLastMoveSquares(nextMoveSqs);
-                    const nextHistory = moveHistory.slice(0, currentIndex);
-                    nextHistory.push(move.san);
-                    setMoveHistory(nextHistory);
-                    setCurrentIndex(nextFens.length - 1);
-                    setFen(game.fen());
-                    return true;
+                  try {
+                    const move = game.move({ from: s, to: t, promotion: 'q' });
+                    if (move) {
+                      const nextFens = allFens.slice(0, currentIndex + 1);
+                      nextFens.push(game.fen());
+                      setAllFens(nextFens);
+                      const nextMoveSqs = lastMoveSquares.slice(0, currentIndex + 1);
+                      nextMoveSqs.push({ from: s, to: t });
+                      setLastMoveSquares(nextMoveSqs);
+                      const nextHistory = moveHistory.slice(0, currentIndex);
+                      nextHistory.push(move.san);
+                      setMoveHistory(nextHistory);
+                      setCurrentIndex(nextFens.length - 1);
+                      setFen(game.fen());
+                      return true;
+                    }
+                  } catch (e: any) {
+                    console.error("Invalid move", e);
+                    alert(`Invalid move: ${e.message}`);
                   }
                   return false;
                 }}
                 onSquareClick={() => goToMove(currentIndex + 1)}
                 onSquareRightClick={() => goToMove(currentIndex - 1)}
                 animationDuration={300}
-                customArrows={filteredCandidates.map((c, i) => [c.move.substring(0, 2), c.move.substring(2, 4), ['rgba(0, 255, 0, 0.8)', 'rgba(255, 255, 0, 0.6)', 'rgba(255, 165, 0, 0.4)'][i]])}
+                customArrows={filteredCandidates.map((c: any, i: number) => [c.move.substring(0, 2), c.move.substring(2, 4), ['rgba(0, 255, 0, 0.8)', 'rgba(255, 255, 0, 0.6)', 'rgba(255, 165, 0, 0.4)'][i]])}
                 customSquareStyles={{
                   ...(lastMoveSquares[currentIndex] ? {
                     [lastMoveSquares[currentIndex].from]: { backgroundColor: 'rgba(255, 255, 0, 0.4)' },

@@ -4,10 +4,11 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 
 ## Features
 
-- **Real-time Evaluation**: Powered by Stockfish 16.1.
+- **Real-time Evaluation**: Powered by Stockfish 18 (latest version).
 - **Game Import**: Fetch games directly from Chess.com via username.
 - **Interactive Graph**: Visualize the flow of the game and identify critical moments.
 - **Move Classification**: Understand "Brilliant", "Great", and "Blunder" moves.
+- **Improved Responsiveness**: Fixed move-snapback issues on modern browsers and React 19 by optimizing component re-renders.
 - **Secure Access**: Built-in Basic Authentication and HTTPS support.
 
 ---
@@ -44,7 +45,8 @@ The easiest way to run GaffBuster is using Docker.
 
 4.  **Access the app**:
     Open [https://localhost:5000](https://localhost:5000) in your browser.
-    *Note: Since it uses self-signed certificates, you may need to bypass the browser security warning.*
+
+    > ⚠️ **Important Security Note**: Since the application uses self-signed certificates generated during setup, your browser will display a security warning (e.g., "Your connection is not private"). You must click "Advanced" and "Proceed to localhost (unsafe)" to access the application. This is expected for local development and private installations.
 
 ### Makefile Commands
 
@@ -118,8 +120,30 @@ If you prefer to run it locally:
 
 ---
 
-## Tech Stack
+## Versions & Tech Stack
 
-- **Frontend**: React, TypeScript, Vite, Recharts, Chessboard.js
-- **Backend**: Node.js, Express, WebSocket, Stockfish
-- **DevOps**: Docker, Docker Compose, Makefile
+### Core Components
+- **Stockfish**: 18 (Latest stable release)
+- **Node.js**: 22 (LTS)
+
+### Frontend
+- **React**: 19.2.6
+- **TypeScript**: 6.0.2
+- **Vite**: 8.0.12
+- **chess.js**: 1.4.0
+- **cm-chessboard**: 8.12.7
+- **react-chessboard**: 4.7.2
+- **Recharts**: 3.8.1
+- **@vitejs/plugin-basic-ssl**: 2.3.0
+
+### Backend
+- **Express**: 5.2.1
+- **ws (WebSocket)**: 8.20.1
+- **express-basic-auth**: 1.2.1
+- **cors**: 2.8.6
+- **http-proxy-middleware**: 4.0.0
+
+### Infrastructure
+- **Docker**: Engine 24+ / Desktop 4+ recommended
+- **Docker Compose**: V2 recommended
+- **Makefile**: GNU Make 4.3+ recommended

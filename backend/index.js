@@ -46,12 +46,20 @@ const wss = new WebSocketServer({
 
 // PROXY: Forward all HTTP requests to Vite dev server
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://localhost:5173';
-app.use('/', createProxyMiddleware({
+const proxy = createProxyMiddleware({
   target: FRONTEND_URL,
   changeOrigin: true,
   secure: false, 
-  ws: false 
-}));
+  ws: true 
+});
+app.use('/', proxy);
+
+// Handle WebSocket upgrades for the proxy (Vite HMR)
+server.on('upgrade', (req, socket, head) => {
+  if (req.url && !req.url.startsWith('/ws')) {
+    proxy.upgrade(req, socket, head);
+  }
+});
 
 let activeWs = null;
 
