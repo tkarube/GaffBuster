@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      - FRONTEND_URL=https://frontend:5173
+    volumes:
+      - ./backend/config.json:/app/config.json
+      - ./backend/users.json:/app/users.json
+      - ./certs:/certs
+    depends_on:
+      - frontend
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - /app/node_modules
+      - ./frontend:/app

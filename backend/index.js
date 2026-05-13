@@ -44,9 +44,10 @@ const wss = new WebSocketServer({
   path: '/ws' 
 });
 
-// PROXY: Forward all HTTP requests to Vite dev server (port 5173)
+// PROXY: Forward all HTTP requests to Vite dev server
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://localhost:5173';
 app.use('/', createProxyMiddleware({
-  target: 'https://localhost:5173',
+  target: FRONTEND_URL,
   changeOrigin: true,
   secure: false, 
   ws: false 

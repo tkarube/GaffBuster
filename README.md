@@ -1,52 +1,93 @@
-# Web-Based Chess Analysis Tool
+# GaffBuster ♟️
 
-A high-performance, web-based chess analysis application powered by the **Stockfish 17** engine. 
-Seamlessly import games from Chess.com, visualize evaluation trends with real-time graphs, and perform deep game reviews with automated move quality classification.
+GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. Import games directly from Chess.com, visualize evaluation trends with real-time graphs, and perform deep game reviews with move quality classification.
 
-## Key Features
+## Features
 
-- **Interactive Analysis**: Continuous "Infinite Search" using Stockfish with visual candidate move arrows (Top 3 lines).
-- **Evaluation Graph**: Real-time line chart showing game progression with integrated blunder, brilliant, and mistake markers.
-- **Automated Game Review**: Professional move quality classification (Brilliant !!, Great !, Best ★, Mistake ?, Miss X, Blunder ??).
-- **Chess.com Integration**: One-click import of any player's recent games via the official Public API.
-- **Main Line Restoration**: Branch off to explore variations and return to the original game state with a single click on the graph.
-- **Unified Secure Server**: Single-port HTTPS/WSS support for seamless access across PC and mobile (iOS/Android) browsers.
-- **Resource Management**: Configure CPU threads and memory allocation for Stockfish to match your hardware.
+- **Real-time Evaluation**: Powered by Stockfish 16.1.
+- **Game Import**: Fetch games directly from Chess.com via username.
+- **Interactive Graph**: Visualize the flow of the game and identify critical moments.
+- **Move Classification**: Understand "Brilliant", "Great", and "Blunder" moves.
+- **Secure Access**: Built-in Basic Authentication and HTTPS support.
 
-## Installation Guide
+---
 
-### 1. Prerequisites
-Ensure the following are installed on your host:
-- **Node.js** (v18 or higher)
-- **Stockfish Engine**
-  - Linux: `sudo apt-get install stockfish`
-  - macOS: `brew install stockfish`
+## Getting Started with Docker (Recommended)
 
-### 2. Setup Certificates (HTTPS)
-Generate self-signed SSL certificates in the project root:
-```bash
-mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj "/C=JP/ST=Tokyo/L=City/O=ChessTool/OU=Dev/CN=localhost"
-```
+The easiest way to run GaffBuster is using Docker.
 
-### 3. Install Dependencies
-Run the unified installation script:
-```bash
-npm run install-all
-```
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+- `make` (optional, but recommended)
+
+### Quick Start
+
+1.  **Clone the repository**:
+    ```bash
+    git clone <repository-url>
+    cd GaffBuster
+    ```
+
+2.  **Setup configuration and SSL**:
+    This will create default `config.json`, `users.json`, and generate self-signed SSL certificates in the `certs/` directory.
+    ```bash
+    make setup
+    ```
+
+3.  **Build and Start**:
+    ```bash
+    make build
+    make up
+    ```
+
+4.  **Access the app**:
+    Open [https://localhost:5000](https://localhost:5000) in your browser.
+    *Note: Since it uses self-signed certificates, you may need to bypass the browser security warning.*
+
+### Makefile Commands
+
+| Command | Description |
+| :--- | :--- |
+| `make setup` | Initialize config files and generate SSL certs. |
+| `make build` | Build Docker images. |
+| `make up` | Start the application in detached mode. |
+| `make stop` | Stop the containers without removing them. (Alternative: `docker compose stop`) |
+| `make down` | Stop and remove the containers and network. |
+| `make restart` | Restart the application containers. |
+| `make logs` | Follow application logs. |
+| `make clean` | Remove containers, images, and volumes. |
+
+---
+
+## Managing the Application
+
+- **To Stop**: Run `make down`. This will stop the app and clean up the internal network.
+- **To Restart**: Run `make restart`. Use this after changing configuration files.
+- **To View Logs**: Run `make logs` to see what's happening inside the containers.
+
+---
 
 ## Configuration
 
-### Authentication (`backend/users.json`)
-Copy `backend/users.json.example` to `backend/users.json` and set your credentials:
+You can customize the application by editing the files in the `backend/` directory.
+
+### 1. User Authentication (`backend/users.json`)
+Manage the users and passwords for the Basic Authentication login.
 ```json
 {
-  "admin": "your_secure_password"
+  "admin": "your-secure-password"
 }
 ```
+*Note: After changing this file, you need to restart the containers with `make up` (or `docker compose restart backend`).*
 
-### Engine & User Settings (`backend/config.json`)
-Copy `backend/config.json.example` to `backend/config.json` to set your preferences:
+### 2. Engine & App Settings (`backend/config.json`)
+Configure the Stockfish engine performance and default settings.
+- **`threads`**: Number of CPU cores to be used by Stockfish. Increase this for faster analysis.
+- **`hash`**: Memory (MB) allocated to the engine's hash table.
+- **`chessComUsername`**: The default Chess.com username used to fetch games.
+
 ```json
 {
   "threads": 4,
@@ -54,20 +95,31 @@ Copy `backend/config.json.example` to `backend/config.json` to set your preferen
   "chessComUsername": "your_username"
 }
 ```
+*Note: These settings are applied when the Stockfish engine starts (usually upon a new browser connection).*
 
-## Running the Tool
+---
 
-To start both the frontend and backend servers simultaneously:
-```bash
-npm start
-```
+## Local Development (Without Docker)
 
-**Access URL**: `https://[Your-Server-IP]:5000`
+If you prefer to run it locally:
 
-> **Security Note**: As this uses a self-signed certificate, your browser will show a warning. Click **"Advanced"** and then **"Proceed"** to enter. No separate port access or additional configuration is required.
+1.  **Install dependencies**:
+    ```bash
+    npm run install-all
+    ```
 
-## GitHub Publishing
-This repository includes a `.gitignore` to protect your `users.json`, `config.json`, and SSL certificates. **Do not remove these entries** if you plan to keep your repository public.
+2.  **Setup SSL**:
+    Create a `certs/` directory and place `key.pem` and `cert.pem` inside.
 
-## License
-ISC License
+3.  **Start both backend and frontend**:
+    ```bash
+    npm start
+    ```
+
+---
+
+## Tech Stack
+
+- **Frontend**: React, TypeScript, Vite, Recharts, Chessboard.js
+- **Backend**: Node.js, Express, WebSocket, Stockfish
+- **DevOps**: Docker, Docker Compose, Makefile
