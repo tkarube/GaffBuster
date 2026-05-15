@@ -191,6 +191,26 @@ function App() {
     }
   }, [allFens, processNextScan]);
 
+  const startMainAnalysis = useCallback(() => {
+    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    if (socketRef.current?.readyState === WebSocket.OPEN && fenRef.current) {
+      if (fenRef.current === startFen) {
+        console.log('Skipping analysis for initial position');
+        setAnalysisStartTime(null);
+        evalRef.current = '0.00';
+        setEvaluation('0.00');
+        setCandidates([]);
+        socketRef.current.send(JSON.stringify({ type: 'stop' }));
+        return;
+      }
+      candidatesRef.current = [];
+      evalRef.current = null;
+      setAnalysisStartTime(Date.now());
+      socketRef.current.send(JSON.stringify({ type: 'stop' }));
+      socketRef.current.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
+    }
+  }, []);
+
   // WebSocket for Analysis
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -200,8 +220,9 @@ function App() {
     socket.onopen = () => {
       console.log('WebSocket Connected');
       socket.send(JSON.stringify({ type: 'uci' }));
-      setAnalysisStartTime(Date.now());
-      socket.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
+      if (scanQueueRef.current.length === 0) {
+        startMainAnalysis();
+      }
     };
     socket.onclose = () => {
       console.log('WebSocket Disconnected');
@@ -230,7 +251,11 @@ function App() {
           else if (q === 'blunder') s.blunder++;
         }
         isScanningRef.current = false;
-        setTimeout(processNextScan, 10);
+        if (scanQueueRef.current.length === 0) {
+          startMainAnalysis();
+        } else {
+          setTimeout(processNextScan, 10);
+        }
         return;
       }
       if (message.type === 'info') {
@@ -294,13 +319,17 @@ function App() {
 
   useEffect(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN && fen) {
-      candidatesRef.current = [];
-      evalRef.current = null;
-      setAnalysisStartTime(Date.now());
-      socketRef.current.send(JSON.stringify({ type: 'stop' }));
-      socketRef.current.send(JSON.stringify({ type: 'position', fen: fen }));
+      if (scanQueueRef.current.length > 0 || isScanningRef.current !== false) {
+        // Suppress main analysis during bulk scan or if a scan is active
+        socketRef.current.send(JSON.stringify({ type: 'stop' }));
+        setAnalysisStartTime(null);
+        evalRef.current = null;
+        setCandidates([]);
+        return;
+      }
+      startMainAnalysis();
     }
-  }, [fen]);
+  }, [fen, startMainAnalysis]);
 
   const goToMove = useCallback((index: number, restoreMainLine = false) => {
     if (restoreMainLine && originalGameRef.current) {
@@ -363,17 +392,29 @@ function App() {
         fens.push(replayGame.fen());
         moveSqs.push({ from: move.from, to: move.to });
       }
+
+      // Explicitly stop main analysis and clear its UI states
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'stop' }));
+      }
+      setAnalysisStartTime(null);
+      evalRef.current = null;
+      setCandidates([]);
+      setEvaluation(null);
+
       setAllFens(fens);
       setLastMoveSquares(moveSqs);
       setMoveHistory(history.map(m => m.san));
       setPgnResult(tempGame.header().Result || null);
       originalGameRef.current = { allFens: fens, moveHistory: history.map(m => m.san), lastMoveSquares: moveSqs };
+      
       setCurrentIndex(0);
       setFen(fens[0]);
       setPgn(pgnString);
       graphDataRef.current = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' }));
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+      
       scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
       isScanningRef.current = false;
       processNextScan();

@@ -12,5 +12,5 @@ COPY . .
 # Expose the frontend port
 EXPOSE 5173
 
-# Start the frontend dev server
-CMD ["npm", "run", "dev"]
+# Start the frontend dev server with exec form to handle signals correctly
+CMD ["./node_modules/.bin/vite", "--host", "0.0.0.0"]

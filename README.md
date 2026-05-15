@@ -96,7 +96,7 @@ Manage the users and passwords for the Basic Authentication login.
 Configure the Stockfish engine performance and default settings.
 - **`threads`**: Number of CPU cores to be used by Stockfish. Increase this for faster analysis.
 - **`hash`**: Memory (MB) allocated to the engine's hash table.
-- **`scanDepth`**: The analysis depth (number of half-moves) for the evaluation graph and game review. Increase this for higher precision, or decrease it for faster processing (default is 18).
+- **`scanDepth`**: The analysis depth (number of half-moves) for the evaluation graph and game review. Increase this for higher precision, or decrease it for faster processing (default is 22).
 - **`chessComUsername`**: The default Chess.com username used to fetch games.
 
 ```json
