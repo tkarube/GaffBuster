@@ -4,7 +4,7 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 
 ## Features
 
-- **Real-time Evaluation**: Powered by Stockfish 18 (latest version).
+- **Real-time Evaluation**: Powered by Stockfish 18 (BMI2 optimized for x86-64-v3).
 - **Game Import**: Fetch games directly from Chess.com via username.
 - **Interactive Graph**: Visualize the flow of the game and identify critical moments.
 - **Move Classification**: Understand "Brilliant", "Great", and "Blunder" moves.
@@ -15,7 +15,7 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 
 ## Getting Started with Docker (Recommended)
 
-The easiest way to run GaffBuster is using Docker.
+The easiest way to run GaffBuster is using Docker. This version is configured to use a high-performance Stockfish 18 binary optimized for BMI2-capable CPUs (x86-64-v3).
 
 ### Prerequisites
 
@@ -123,7 +123,7 @@ If you prefer to run it locally:
 ## Versions & Tech Stack
 
 ### Core Components
-- **Stockfish**: 18 (Latest stable release)
+- **Stockfish**: 18 (BMI2 optimized)
 - **Node.js**: 22 (LTS)
 
 ### Frontend

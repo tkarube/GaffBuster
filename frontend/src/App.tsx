@@ -53,6 +53,7 @@ const EvaluationBar = memo(({ evaluation }: { evaluation: string | null }) => {
 
 const CustomDot = (props: any) => {
   const { cx, cy, payload } = props;
+  if (!payload) return null;
   const colors: Record<string, string> = {
     brilliant: '#26c2a3',
     great: '#5c8d4d',
@@ -73,17 +74,19 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump }: any) => {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
   return (
-    <LineChart width={310} height={100} data={data} 
-      onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex)}
-      margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
-    >
-      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" />
-      <XAxis dataKey="move" hide />
-      <YAxis domain={[-10, 10]} hide />
-      <ReferenceLine y={0} stroke="#666" />
-      <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
-      <Line type="linear" dataKey="eval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
-    </LineChart>
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} 
+        onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex)}
+        margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" />
+        <XAxis dataKey="move" hide />
+        <YAxis domain={[-10, 10]} hide />
+        <ReferenceLine y={0} stroke="#666" />
+        <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
+        <Line type="monotone" dataKey="eval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
+      </LineChart>
+    </ResponsiveContainer>
   );
 });
 
@@ -159,6 +162,15 @@ function App() {
     }, 250);
     return () => clearInterval(interval);
   }, []);
+
+  // Initial scan trigger
+  useEffect(() => {
+    if (scanQueueRef.current.length === 0 && graphDataRef.current.length === 0 && isScanningRef.current === false) {
+      graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
+      scanQueueRef.current.push({ fen: allFens[0], index: 0 });
+      processNextScan();
+    }
+  }, [allFens, processNextScan]);
 
   // WebSocket for Analysis
   useEffect(() => {
@@ -337,7 +349,7 @@ function App() {
       setCurrentIndex(0);
       setFen(fens[0]);
       setPgn(pgnString);
-      graphDataRef.current = [];
+      graphDataRef.current = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' }));
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
@@ -415,10 +427,19 @@ function App() {
                       setMoveHistory(nextHistory);
                       setCurrentIndex(nextFens.length - 1);
                       setFen(game.fen());
+
+                      // Trigger scan for the new move
+                      const newIndex = nextFens.length - 1;
+                      const newPoint = { move: newIndex, eval: graphDataRef.current[newIndex - 1]?.eval || 0, quality: 'normal' };
+                      if (graphDataRef.current.length <= newIndex) {
+                        graphDataRef.current = [...graphDataRef.current, newPoint];
+                      }
+                      scanQueueRef.current.push({ fen: game.fen(), index: newIndex });
+                      processNextScan();
+
                       return true;
-                    }
-                  } catch (e: any) {
-                    console.error("Invalid move", e);
+                      }
+                      } catch (e: any) {                    console.error("Invalid move", e);
                     alert(`Invalid move: ${e.message}`);
                   }
                   return false;
@@ -451,13 +472,16 @@ function App() {
           <div className="eval-bar-container">
             <div className="eval-info"><p>Evaluation: <strong>{evaluation || 'Calculating...'}</strong></p><p>Move: <strong>{currentIndex} / {allFens.length - 1}</strong></p></div>
             <button onClick={() => {
-              setAllFens(['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']);
+              const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+              setAllFens([startFen]);
               setMoveHistory([]);
               setCurrentIndex(0);
-              setFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-              graphDataRef.current = [];
+              setFen(startFen);
+              graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
               statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
               opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+              scanQueueRef.current = [{ fen: startFen, index: 0 }];
+              processNextScan();
             }} className="btn-reset">Reset</button>
           </div>
         </div>

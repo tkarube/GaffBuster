@@ -73,6 +73,18 @@ wss.on('connection', (ws) => {
   let stockfish = spawn('stockfish');
   let stockfishScan = spawn('stockfish');
 
+  const handleError = (engine, label) => {
+    engine.on('error', (err) => {
+      console.error(`Failed to start ${label} engine:`, err);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'error', data: `Engine Error (${label}): ${err.message}. Please ensure Stockfish is installed and in your PATH.` }));
+      }
+    });
+  };
+
+  handleError(stockfish, 'main');
+  handleError(stockfishScan, 'scan');
+
   const setupEngine = (engine, label) => {
     let buffer = '';
     engine.stdout.on('data', (data) => {
@@ -99,6 +111,7 @@ wss.on('connection', (ws) => {
   ws.on('message', (message) => {
     try {
       const command = JSON.parse(message.toString());
+      console.log('Received command:', command.type);
       if (command.type === 'uci') {
         stockfish.stdin.write('uci\n');
         stockfish.stdin.write('isready\n');
