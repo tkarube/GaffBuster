@@ -97,6 +97,17 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
   );
 });
 
+const formatPgnDate = (date: string, time: string, tz: string) => {
+  if (!date) return '';
+  const cleanDate = date.replace(/\./g, '-'); // YYYY.MM.DD -> YYYY-MM-DD
+  try {
+    const dt = new Date(`${cleanDate}T${time || '00:00:00'}Z`); // PGN dates/times are UTC
+    return dt.toLocaleString('en-US', { timeZone: tz });
+  } catch (e) {
+    return `${date} ${time}`;
+  }
+};
+
 function App() {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [allFens, setAllFens] = useState<string[]>(['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']);
@@ -109,8 +120,14 @@ function App() {
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [players, setPlayers] = useState({ white: 'White', black: 'Black' });
   const [chessComUsername, setChessComUsername] = useState('mebukichi');
+  const [timezone, setTimezone] = useState('America/Los_Angeles');
+  const [isPreAnalyzed, setIsPreAnalyzed] = useState<number | false>(false);
+  const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
+  const [localGames, setLocalGames] = useState<any[]>([]);
+  const [loadingLocal, setLoadingLocal] = useState(false);
 
   const [evaluation, setEvaluation] = useState<string | null>(null);
+
   const [candidates, setCandidates] = useState<any[]>([]);
   const [graphData, setGraphData] = useState<GraphPoint[]>([]);
   const [stats, setStats] = useState<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
@@ -135,17 +152,11 @@ function App() {
 
   useEffect(() => {
     fenRef.current = fen;
+    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'toggle_pause', shouldPause: fen !== startFen }));
+    }
   }, [fen]);
-
-  // Fetch Config
-  useEffect(() => {
-    fetch('/api/config')
-      .then(res => res.json())
-      .then(data => {
-        if (data.chessComUsername) setChessComUsername(data.chessComUsername);
-      })
-      .catch(e => console.error('Failed to fetch config', e));
-  }, []);
 
   const processNextScan = useCallback(() => {
     if (isScanningRef.current !== false || scanQueueRef.current.length === 0) return;
@@ -160,36 +171,6 @@ function App() {
       socketRef.current.send(JSON.stringify({ type: 'scan_position', fen: next.fen, index: next.index }));
     }
   }, []);
-
-  // Throttled UI Update
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setEvaluation(evalRef.current);
-      setCandidates([...candidatesRef.current]);
-      setGraphData([...graphDataRef.current]);
-      setStats({ ...statsRef.current });
-      setOpponentStats({ ...opponentStatsRef.current });
-      
-      // Update timer here to avoid extra re-renders
-      if (analysisStartTime) {
-        const elapsed = (Date.now() - analysisStartTime) / 1000;
-        const capped = Math.min(300, elapsed);
-        setElapsedTime(capped.toFixed(1) + 's');
-      } else {
-        setElapsedTime('0.0s');
-      }
-    }, 250);
-    return () => clearInterval(interval);
-  }, [analysisStartTime]);
-
-  // Initial scan trigger
-  useEffect(() => {
-    if (scanQueueRef.current.length === 0 && graphDataRef.current.length === 0 && isScanningRef.current === false) {
-      graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
-      scanQueueRef.current.push({ fen: allFens[0], index: 0 });
-      processNextScan();
-    }
-  }, [allFens, processNextScan]);
 
   const startMainAnalysis = useCallback(() => {
     const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -210,6 +191,35 @@ function App() {
       socketRef.current.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
     }
   }, []);
+
+  // Throttled UI Update
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setEvaluation(evalRef.current);
+      setCandidates([...candidatesRef.current]);
+      setGraphData([...graphDataRef.current]);
+      setStats({ ...statsRef.current });
+      setOpponentStats({ ...opponentStatsRef.current });
+      
+      if (analysisStartTime) {
+        const elapsed = (Date.now() - analysisStartTime) / 1000;
+        const capped = Math.min(300, elapsed);
+        setElapsedTime(capped.toFixed(1) + 's');
+      } else {
+        setElapsedTime('0.0s');
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [analysisStartTime]);
+
+  // Initial scan trigger
+  useEffect(() => {
+    if (scanQueueRef.current.length === 0 && graphDataRef.current.length === 0 && isScanningRef.current === false) {
+      graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
+      scanQueueRef.current.push({ fen: allFens[0], index: 0 });
+      processNextScan();
+    }
+  }, [allFens, processNextScan]);
 
   // WebSocket for Analysis
   useEffect(() => {
@@ -315,18 +325,11 @@ function App() {
       }
     };
     return () => socket.close();
-  }, [processNextScan]);
+  }, [processNextScan, startMainAnalysis]);
 
   useEffect(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN && fen) {
-      if (scanQueueRef.current.length > 0 || isScanningRef.current !== false) {
-        // Suppress main analysis during bulk scan or if a scan is active
-        socketRef.current.send(JSON.stringify({ type: 'stop' }));
-        setAnalysisStartTime(null);
-        evalRef.current = null;
-        setCandidates([]);
-        return;
-      }
+      // Don't block main analysis during background scan
       startMainAnalysis();
     }
   }, [fen, startMainAnalysis]);
@@ -393,7 +396,6 @@ function App() {
         moveSqs.push({ from: move.from, to: move.to });
       }
 
-      // Explicitly stop main analysis and clear its UI states
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: 'stop' }));
       }
@@ -411,28 +413,126 @@ function App() {
       setCurrentIndex(0);
       setFen(fens[0]);
       setPgn(pgnString);
+
+      const gameUrl = tempGame.header().Link || '';
+      const gameId = gameUrl.split('/').pop();
+
+      // IMPORTANT: Initialize graph and stats before fetching/scanning
       graphDataRef.current = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' }));
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
-      
-      scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
-      isScanningRef.current = false;
-      processNextScan();
+
+      if (gameId) {
+        fetch(`/api/analysis/${gameId}`)
+          .then(res => {
+            if (res.ok) return res.json();
+            throw new Error('No pre-analysis found');
+          })
+          .then(data => {
+            console.log('[App] Using pre-analyzed results from backend');
+            setIsPreAnalyzed(data.analysisDepth || 30);
+            const preEvalData = data.evaluations.map((e: any) => ({
+              move: e.move,
+              eval: typeof e.eval === 'string' ? (e.eval.startsWith('M') ? (parseFloat(e.eval.substring(1)) > 0 ? 10 : -10) : parseFloat(e.eval)) : e.eval,
+              quality: 'normal' 
+            }));
+
+            for (let i = 1; i < preEvalData.length; i++) {
+              const score = preEvalData[i].eval;
+              const prevEval = preEvalData[i-1].eval;
+              const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
+              let quality = 'normal';
+              if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
+              else if (delta >= 1.0) quality = 'great';
+              else if (delta >= -0.1) quality = 'best';
+              else if (delta <= -3.0) quality = 'blunder';
+              else if (delta <= -1.5) quality = 'miss';
+              else if (delta <= -0.8) quality = 'mistake';
+              preEvalData[i].quality = quality;
+              
+              const playerMoved = (i % 2 !== 0) ? 'w' : 'b';
+              const isUser = userColorRef.current === playerMoved;
+              const s = isUser ? statsRef.current : opponentStatsRef.current;
+              if (quality === 'brilliant') s.brilliant++;
+              else if (quality === 'great') s.great++;
+              else if (quality === 'best') s.best++;
+              else if (quality === 'mistake') s.mistake++;
+              else if (quality === 'miss') s.miss++;
+              else if (quality === 'blunder') s.blunder++;
+            }
+
+            graphDataRef.current = preEvalData;
+            isScanningRef.current = false;
+            scanQueueRef.current = [];
+            startMainAnalysis();
+          })
+          .catch(() => {
+            setIsPreAnalyzed(false);
+            scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
+            isScanningRef.current = false;
+            processNextScan();
+          });
+      } else {
+        setIsPreAnalyzed(false);
+        scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
+        isScanningRef.current = false;
+        processNextScan();
+      }
     } catch (e) { console.error(e); }
   };
 
-  const fetchGames = async () => {
+  const fetchGames = async (usernameOverride?: string) => {
     setLoadingGames(true);
+    const targetUsername = usernameOverride || chessComUsername;
     try {
-      const response = await fetch(`https://api.chess.com/pub/player/${chessComUsername}/games/archives`);
-      const data = await response.json();
-      const latest = data.archives[data.archives.length - 1];
+      const [archivesRes, analyzedIdsRes] = await Promise.all([
+        fetch(`https://api.chess.com/pub/player/${targetUsername}/games/archives`),
+        fetch('/api/analyzed-ids')
+      ]);
+      
+      const archivesData = await archivesRes.json();
+      if (analyzedIdsRes.ok) {
+        const ids = await analyzedIdsRes.json();
+        setAnalyzedGameIds(ids);
+      }
+
+      const latest = archivesData.archives[archivesData.archives.length - 1];
       const gRes = await fetch(latest);
       const gData = await gRes.json();
       setChessComGames(gData.games.reverse().slice(0, 10));
-    } catch (e) {}
+    } catch (e) {
+      console.error('Failed to fetch games', e);
+    }
     setLoadingGames(false);
   };
+
+  const fetchLocalGames = async () => {
+    setLoadingLocal(true);
+    try {
+      const res = await fetch('/api/local-games');
+      if (res.ok) {
+        const data = await res.json();
+        setLocalGames(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch local games', e);
+    }
+    setLoadingLocal(false);
+  };
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.chessComUsername) {
+          setChessComUsername(data.chessComUsername);
+          if (data.timezone) setTimezone(data.timezone);
+          fetchGames(data.chessComUsername);
+          fetchLocalGames();
+        }
+      })
+      .catch(e => console.error('Failed to fetch config', e));
+  }, []);
 
   const currentMoveQuality = graphData[currentIndex]?.quality;
   const getQualityLabel = (q: string | undefined) => {
@@ -508,7 +608,6 @@ function App() {
                       setCurrentIndex(nextFens.length - 1);
                       setFen(game.fen());
 
-                      // Trigger scan for the new move
                       const newIndex = nextFens.length - 1;
                       const newPoint = { move: newIndex, eval: graphDataRef.current[newIndex - 1]?.eval || 0, quality: 'normal' };
                       if (graphDataRef.current.length <= newIndex) {
@@ -582,6 +681,7 @@ function App() {
               setCurrentIndex(0);
               setFen(startFen);
               setPgnResult(null);
+              setIsPreAnalyzed(false);
               graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
               statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
               opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
@@ -594,6 +694,7 @@ function App() {
           <div className="graph-container">
             <div className="graph-header">
               <h3>Evaluation Graph <span className="engine-timer-small">({elapsedTime})</span></h3>
+              {isPreAnalyzed && <span className="pre-analyzed-badge">Deep Analysis (Depth {isPreAnalyzed})</span>}
               <div className="current-eval-badge">
                 {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
               </div>
@@ -650,7 +751,47 @@ function App() {
               </tbody>
             </table>
           </div>
-          <div className="chess-com-import"><h3>Chess.com Import ({chessComUsername})</h3><button onClick={fetchGames} disabled={loadingGames}>{loadingGames ? '...' : 'Fetch Recent Games'}</button><div className="games-list">{chessComGames.map((g, i) => (<div key={i} className="game-item" onClick={() => processPgn(g.pgn)}>{g.white.username} vs {g.black.username}</div>))}</div></div>
+          <div className="chess-com-import">
+            <h3>Chess.com Import ({chessComUsername})</h3>
+            <div className="import-legend">
+              <span className="analyzed-status-dot">●</span> Deep Analysis Available
+            </div>
+            <button onClick={() => fetchGames()} disabled={loadingGames}>{loadingGames ? '...' : 'Fetch Recent Games'}</button>
+            <div className="games-list">
+              {chessComGames.map((g, i) => {
+                const gameId = g.url.split('/').pop();
+                const isAnalyzed = analyzedGameIds.includes(gameId);
+                return (
+                  <div key={i} className={`game-item ${isAnalyzed ? 'analyzed' : ''}`} onClick={() => processPgn(g.pgn)}>
+                    <div className="game-item-info">
+                      {g.white.username} vs {g.black.username}
+                      <div className="game-date">
+                        {new Date(g.end_time * 1000).toLocaleString('en-US', { timeZone: timezone })}
+                      </div>
+                    </div>
+                    {isAnalyzed && <span className="analyzed-status-dot" title="Deep Analysis Available">●</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="local-games-import">
+            <h3>Local Saved Games</h3>
+            <button onClick={fetchLocalGames} disabled={loadingLocal}>{loadingLocal ? '...' : 'Refresh Local Games'}</button>
+            <div className="games-list">
+              {localGames.length === 0 ? <div className="no-games">No local games found</div> : 
+                localGames.map((g, i) => (
+                  <div key={i} className="game-item analyzed" onClick={() => processPgn(g.pgn)}>
+                    <div className="game-item-info">
+                      {g.white} vs {g.black} ({g.result})
+                      <div className="game-date">{formatPgnDate(g.date, g.time, timezone)}</div>
+                    </div>
+                    <span className="analyzed-status-dot">●</span>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
         </div>
       </main>
     </div>

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
+const { Chess } = require('chess.js');
 const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const basicAuth = require('express-basic-auth');
@@ -17,7 +18,56 @@ const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json')));
 // Public endpoint to get config (specifically the username)
 // Place this BEFORE basicAuth middleware to allow initial fetch
 app.get('/api/config', (req, res) => {
-  res.json({ chessComUsername: config.chessComUsername || 'mebukichi' });
+  res.json({ 
+    chessComUsername: config.chessComUsername || 'mebukichi',
+    timezone: config.timezone || 'America/Los_Angeles'
+  });
+});
+
+// Endpoint to check for pre-analyzed game results
+app.get('/api/analysis/:gameId', (req, res) => {
+  const gameId = req.params.gameId;
+  const filePath = path.join(__dirname, 'results', `${gameId}.json`);
+  if (fs.existsSync(filePath)) {
+    const data = JSON.parse(fs.readFileSync(filePath));
+    res.json(data);
+  } else {
+    res.status(404).json({ error: 'Analysis not found' });
+  }
+});
+
+// Endpoint to get list of analyzed game IDs
+app.get('/api/analyzed-ids', (req, res) => {
+  const resultsDir = path.join(__dirname, 'results');
+  if (!fs.existsSync(resultsDir)) {
+    return res.json([]);
+  }
+  const files = fs.readdirSync(resultsDir);
+  const ids = files.filter(f => f.endsWith('.json')).map(f => f.replace('.json', ''));
+  res.json(ids);
+});
+
+// Endpoint to list saved PGNs
+app.get('/api/local-games', (req, res) => {
+  const pgnsDir = path.join(__dirname, 'pgns');
+  if (!fs.existsSync(pgnsDir)) return res.json([]);
+  
+  const files = fs.readdirSync(pgnsDir).filter(f => f.endsWith('.pgn'));
+  const games = files.map(file => {
+    const content = fs.readFileSync(path.join(pgnsDir, file), 'utf8');
+    const chess = new Chess();
+    chess.loadPgn(content);
+    return {
+      id: file.replace('.pgn', ''),
+      white: chess.header().White || 'Unknown',
+      black: chess.header().Black || 'Unknown',
+      result: chess.header().Result || '*',
+      date: chess.header().Date || '',
+      time: chess.header().StartTime || chess.header().UTCTime || '',
+      pgn: content
+    };
+  });
+  res.json(games.reverse()); // Newest first
 });
 
 // Load users for authentication
@@ -92,6 +142,10 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 let activeWs = null;
+const PAUSE_FILE = path.join(__dirname, 'results', 'bot_pause.signal');
+
+// Cleanup pause file on start just in case
+if (fs.existsSync(PAUSE_FILE)) fs.unlinkSync(PAUSE_FILE);
 
 wss.on('connection', (ws) => {
   if (activeWs) {
@@ -99,6 +153,12 @@ wss.on('connection', (ws) => {
     activeWs.close();
   }
   activeWs = ws;
+  
+  // ALWAYS pause the bot when frontend is connected to ensure resource availability
+  if (!fs.existsSync(PAUSE_FILE)) {
+    fs.writeFileSync(PAUSE_FILE, 'paused');
+    console.log('[Backend] Frontend connected - Bot PAUSED to prioritize user');
+  }
   
   let stockfish = spawn('stockfish');
   let stockfishScan = spawn('stockfish');
@@ -156,16 +216,24 @@ wss.on('connection', (ws) => {
       const command = JSON.parse(message.toString());
       console.log('Received command:', command.type);
       if (command.type === 'uci') {
-        console.log(`Setting up engines with Threads: ${config.threads || 1}, Hash: ${config.hash || 128}`);
+        const totalCores = parseInt(require('child_process').execSync('nproc').toString().trim()) || 1;
+        const requestedThreads = config.threads || 1;
+        
+        // Scan engine always uses 1 thread
+        const scanThreads = 1;
+        // Main engine gets the rest, capped at core count - scan thread
+        const mainThreads = Math.max(1, Math.min(requestedThreads, totalCores - scanThreads));
+
+        console.log(`Setting up engines - Main: ${mainThreads} threads, Scan: ${scanThreads} threads (System Cores: ${totalCores})`);
         
         stockfish.stdin.write('uci\n');
-        stockfish.stdin.write(`setoption name Threads value ${config.threads || 1}\n`);
+        stockfish.stdin.write(`setoption name Threads value ${mainThreads}\n`);
         stockfish.stdin.write(`setoption name Hash value ${config.hash || 128}\n`);
         stockfish.stdin.write('setoption name MultiPV value 3\n');
         stockfish.stdin.write('isready\n');
 
         stockfishScan.stdin.write('uci\n');
-        stockfishScan.stdin.write(`setoption name Threads value ${config.threads || 1}\n`);
+        stockfishScan.stdin.write(`setoption name Threads value ${scanThreads}\n`);
         stockfishScan.stdin.write(`setoption name Hash value ${config.hash || 128}\n`);
         stockfishScan.stdin.write('isready\n');
       } else if (command.type === 'position') {
@@ -194,9 +262,19 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (activeWs === ws) activeWs = null;
-    stockfish.kill();
-    stockfishScan.kill();
+    if (activeWs === ws) {
+        activeWs = null;
+        if (fs.existsSync(PAUSE_FILE)) fs.unlinkSync(PAUSE_FILE);
+        console.log('[Backend] Frontend disconnected - Signaling bot to resume');
+    }
+    if (stockfish) {
+        stockfish.stdin.write('quit\n');
+        stockfish.kill();
+    }
+    if (stockfishScan) {
+        stockfishScan.stdin.write('quit\n');
+        stockfishScan.kill();
+    }
   });
 });
 
