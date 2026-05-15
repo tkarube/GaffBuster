@@ -14,13 +14,22 @@ build/
 backend/users.json
 backend/config.json
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+*.local
 
-# SSL Certificates
+# Secrets and Certificates
 certs/
+*.pem
+*.key
+*.pub
+*.cert
+*.crt
+secrets.*
+auth.json
+
+# (Note: .gitignore does NOT ignore changes to already tracked files like *.example.
+#  Be careful not to put real credentials in .example files!)
 
 # IDE / System files
 .DS_Store
