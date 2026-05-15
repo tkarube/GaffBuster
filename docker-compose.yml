@@ -8,9 +8,23 @@ services:
     volumes:
       - ./backend/config.json:/app/config.json
       - ./backend/users.json:/app/users.json
+      - ./backend/analyzed_games.json:/app/analyzed_games.json
+      - ./backend/results:/app/results
+      - ./backend/pgns:/app/pgns
       - ./certs:/certs
     depends_on:
       - frontend
+
+  analysis-bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.analysis-bot
+    volumes:
+      - ./backend/config.json:/app/config.json
+      - ./backend/analyzed_games.json:/app/analyzed_games.json
+      - ./backend/results:/app/results
+      - ./backend/pgns:/app/pgns
+    restart: always
 
   frontend:
     build: ./frontend

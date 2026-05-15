@@ -1,0 +1,120 @@
+{
+  "url": "https://www.chess.com/game/live/166945559572",
+  "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.04.06\"]\n[Round \"-\"]\n[White \"dokkusrinivasarao\"]\n[Black \"mebukichi\"]\n[Result \"1-0\"]\n[CurrentPosition \"rn2k2r/ppp2Bp1/7p/2b1Nb2/8/8/PPPP1PPP/RNB1K2R b KQq - 2 11\"]\n[Timezone \"UTC\"]\n[ECO \"C20\"]\n[ECOUrl \"https://www.chess.com/openings/Bishops-Opening-Boi-Variation\"]\n[UTCDate \"2026.04.06\"]\n[UTCTime \"16:05:48\"]\n[WhiteElo \"1020\"]\n[BlackElo \"1024\"]\n[TimeControl \"600\"]\n[Termination \"dokkusrinivasarao won by resignation\"]\n[StartTime \"16:05:48\"]\n[EndDate \"2026.04.06\"]\n[EndTime \"16:08:45\"]\n[Link \"https://www.chess.com/game/live/166945559572\"]\n\n1. e4 {[%clk 0:09:58.9]} 1... e5 {[%clk 0:09:59.8]} 2. Bc4 {[%clk 0:09:55.3]} 2... Bc5 {[%clk 0:09:58.3]} 3. Qh5 {[%clk 0:09:53]} 3... Qf6 {[%clk 0:09:50.2]} 4. Nf3 {[%clk 0:09:44.7]} 4... h6 {[%clk 0:09:41.2]} 5. Qxe5+ {[%clk 0:09:40.9]} 5... Qxe5 {[%clk 0:09:27]} 6. Nxe5 {[%clk 0:09:38.8]} 6... d6 {[%clk 0:08:59.2]} 7. Nxf7 {[%clk 0:09:16.1]} 7... Rh7 {[%clk 0:08:51.6]} 8. e5 {[%clk 0:08:57]} 8... dxe5 {[%clk 0:08:44]} 9. Nxe5 {[%clk 0:08:54]} 9... Bf5 {[%clk 0:08:31.3]} 10. Bxg8 {[%clk 0:08:48.7]} 10... Rh8 {[%clk 0:08:28.6]} 11. Bf7+ {[%clk 0:08:45.3]} 1-0\n",
+  "white": "dokkusrinivasarao",
+  "black": "mebukichi",
+  "endTime": 1775491725,
+  "analysisDepth": 24,
+  "evaluations": [
+    {
+      "move": 0,
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "eval": 0.29
+    },
+    {
+      "move": 1,
+      "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+      "eval": -0.26
+    },
+    {
+      "move": 2,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+      "eval": 0.25
+    },
+    {
+      "move": 3,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 2",
+      "eval": -0.09
+    },
+    {
+      "move": 4,
+      "fen": "rnbqk1nr/pppp1ppp/8/2b1p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
+      "eval": 0.27
+    },
+    {
+      "move": 5,
+      "fen": "rnbqk1nr/pppp1ppp/8/2b1p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 3 3",
+      "eval": 0.25
+    },
+    {
+      "move": 6,
+      "fen": "rnb1k1nr/pppp1ppp/5q2/2b1p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+      "eval": 0.11
+    },
+    {
+      "move": 7,
+      "fen": "rnb1k1nr/pppp1ppp/5q2/2b1p2Q/2B1P3/5N2/PPPP1PPP/RNB1K2R b KQkq - 5 4",
+      "eval": 0
+    },
+    {
+      "move": 8,
+      "fen": "rnb1k1nr/pppp1pp1/5q1p/2b1p2Q/2B1P3/5N2/PPPP1PPP/RNB1K2R w KQkq - 0 5",
+      "eval": 2.99
+    },
+    {
+      "move": 9,
+      "fen": "rnb1k1nr/pppp1pp1/5q1p/2b1Q3/2B1P3/5N2/PPPP1PPP/RNB1K2R b KQkq - 0 5",
+      "eval": -3.02
+    },
+    {
+      "move": 10,
+      "fen": "rnb1k1nr/pppp1pp1/7p/2b1q3/2B1P3/5N2/PPPP1PPP/RNB1K2R w KQkq - 0 6",
+      "eval": 3.36
+    },
+    {
+      "move": 11,
+      "fen": "rnb1k1nr/pppp1pp1/7p/2b1N3/2B1P3/8/PPPP1PPP/RNB1K2R b KQkq - 0 6",
+      "eval": -3.4
+    },
+    {
+      "move": 12,
+      "fen": "rnb1k1nr/ppp2pp1/3p3p/2b1N3/2B1P3/8/PPPP1PPP/RNB1K2R w KQkq - 0 7",
+      "eval": 4.49
+    },
+    {
+      "move": 13,
+      "fen": "rnb1k1nr/ppp2Np1/3p3p/2b5/2B1P3/8/PPPP1PPP/RNB1K2R b KQkq - 0 7",
+      "eval": -4.45
+    },
+    {
+      "move": 14,
+      "fen": "rnb1k1n1/ppp2Npr/3p3p/2b5/2B1P3/8/PPPP1PPP/RNB1K2R w KQq - 1 8",
+      "eval": 4.43
+    },
+    {
+      "move": 15,
+      "fen": "rnb1k1n1/ppp2Npr/3p3p/2b1P3/2B5/8/PPPP1PPP/RNB1K2R b KQq - 0 8",
+      "eval": -2.76
+    },
+    {
+      "move": 16,
+      "fen": "rnb1k1n1/ppp2Npr/7p/2b1p3/2B5/8/PPPP1PPP/RNB1K2R w KQq - 0 9",
+      "eval": 3.36
+    },
+    {
+      "move": 17,
+      "fen": "rnb1k1n1/ppp3pr/7p/2b1N3/2B5/8/PPPP1PPP/RNB1K2R b KQq - 0 9",
+      "eval": -3.31
+    },
+    {
+      "move": 18,
+      "fen": "rn2k1n1/ppp3pr/7p/2b1Nb2/2B5/8/PPPP1PPP/RNB1K2R w KQq - 1 10",
+      "eval": 5.35
+    },
+    {
+      "move": 19,
+      "fen": "rn2k1B1/ppp3pr/7p/2b1Nb2/8/8/PPPP1PPP/RNB1K2R b KQq - 0 10",
+      "eval": -5.23
+    },
+    {
+      "move": 20,
+      "fen": "rn2k1Br/ppp3p1/7p/2b1Nb2/8/8/PPPP1PPP/RNB1K2R w KQq - 1 11",
+      "eval": 5.48
+    },
+    {
+      "move": 21,
+      "fen": "rn2k2r/ppp2Bp1/7p/2b1Nb2/8/8/PPPP1PPP/RNB1K2R b KQq - 2 11",
+      "eval": -5.52
+    }
+  ]
+}
