@@ -69,13 +69,20 @@ const CustomDot = (props: any) => {
   return <circle cx={cx} cy={cy} r={radius} fill={color} stroke="none" />;
 };
 
-const EvaluationGraphView = memo(({ data, currentIndex, onJump }: any) => {
+const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation }: any) => {
   if (data.length === 0) {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
+  
+  // Flip evaluation if orientation is black (black is at bottom)
+  const orientedData = data.map((d: any) => ({
+    ...d,
+    displayEval: boardOrientation === 'black' ? -d.eval : d.eval
+  }));
+
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} 
+      <LineChart data={orientedData} 
         onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex)}
         margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
       >
@@ -84,7 +91,7 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump }: any) => {
         <YAxis domain={[-10, 10]} hide />
         <ReferenceLine y={0} stroke="#666" />
         <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
-        <Line type="monotone" dataKey="eval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
+        <Line type="monotone" dataKey="displayEval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -96,6 +103,7 @@ function App() {
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [pgn, setPgn] = useState('');
+  const [pgnResult, setPgnResult] = useState<string | null>(null);
   const [chessComGames, setChessComGames] = useState<any[]>([]);
   const [loadingGames, setLoadingGames] = useState(false);
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
@@ -108,6 +116,8 @@ function App() {
   const [stats, setStats] = useState<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const [opponentStats, setOpponentStats] = useState<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const [lastMoveSquares, setLastMoveSquares] = useState<any[]>([]);
+  const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null);
+  const [elapsedTime, setElapsedTime] = useState('0.0s');
 
   const evalRef = useRef<string | null>(null);
   const candidatesRef = useRef<any[]>([]);
@@ -159,9 +169,18 @@ function App() {
       setGraphData([...graphDataRef.current]);
       setStats({ ...statsRef.current });
       setOpponentStats({ ...opponentStatsRef.current });
+      
+      // Update timer here to avoid extra re-renders
+      if (analysisStartTime) {
+        const elapsed = (Date.now() - analysisStartTime) / 1000;
+        const capped = Math.min(300, elapsed);
+        setElapsedTime(capped.toFixed(1) + 's');
+      } else {
+        setElapsedTime('0.0s');
+      }
     }, 250);
     return () => clearInterval(interval);
-  }, []);
+  }, [analysisStartTime]);
 
   // Initial scan trigger
   useEffect(() => {
@@ -181,6 +200,7 @@ function App() {
     socket.onopen = () => {
       console.log('WebSocket Connected');
       socket.send(JSON.stringify({ type: 'uci' }));
+      setAnalysisStartTime(Date.now());
       socket.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
     };
     socket.onclose = () => {
@@ -254,12 +274,12 @@ function App() {
               if (lastIdx > 0 && newData[lastIdx - 1]) {
                 const prevEval = newData[lastIdx - 1].eval;
                 const delta = (lastIdx % 2 !== 0) ? (score - prevEval) : (prevEval - score);
-                if (delta >= 2.5 && Math.abs(prevEval) < 2.5) quality = 'brilliant';
-                else if (delta >= 1.5) quality = 'great';
-                else if (delta >= -0.05) quality = 'best';
-                else if (delta <= -4.0) quality = 'blunder';
-                else if (delta <= -2.5) quality = 'miss';
-                else if (delta <= -1.5) quality = 'mistake';
+                if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
+                else if (delta >= 1.0) quality = 'great';
+                else if (delta >= -0.1) quality = 'best';
+                else if (delta <= -3.0) quality = 'blunder';
+                else if (delta <= -1.5) quality = 'miss';
+                else if (delta <= -0.8) quality = 'mistake';
               }
               newData[lastIdx] = { move: lastIdx, eval: score, quality };
               graphDataRef.current = newData;
@@ -276,6 +296,7 @@ function App() {
     if (socketRef.current?.readyState === WebSocket.OPEN && fen) {
       candidatesRef.current = [];
       evalRef.current = null;
+      setAnalysisStartTime(Date.now());
       socketRef.current.send(JSON.stringify({ type: 'stop' }));
       socketRef.current.send(JSON.stringify({ type: 'position', fen: fen }));
     }
@@ -345,6 +366,7 @@ function App() {
       setAllFens(fens);
       setLastMoveSquares(moveSqs);
       setMoveHistory(history.map(m => m.san));
+      setPgnResult(tempGame.header().Result || null);
       originalGameRef.current = { allFens: fens, moveHistory: history.map(m => m.san), lastMoveSquares: moveSqs };
       setCurrentIndex(0);
       setFen(fens[0]);
@@ -402,6 +424,23 @@ function App() {
     });
   }, [candidates, fen]);
 
+  const currentStatus = useMemo(() => {
+    const game = new Chess(fen);
+    if (game.isCheckmate()) return game.turn() === 'w' ? 'Black wins by Checkmate' : 'White wins by Checkmate';
+    if (game.isStalemate()) return 'Draw by Stalemate';
+    if (game.isThreefoldRepetition()) return 'Draw by Threefold Repetition';
+    if (game.isInsufficientMaterial()) return 'Draw by Insufficient Material';
+    if (game.isDraw()) return 'Draw';
+    
+    if (currentIndex === allFens.length - 1 && pgnResult && pgnResult !== '*') {
+      if (pgnResult === '1-0') return 'White wins';
+      if (pgnResult === '0-1') return 'Black wins';
+      if (pgnResult === '1/2-1/2') return 'Draw';
+      return `Result: ${pgnResult}`;
+    }
+    return null;
+  }, [fen, currentIndex, allFens.length, pgnResult]);
+
   return (
     <div className="container">
       <header><h1>Chess Analysis Tool</h1></header>
@@ -438,8 +477,9 @@ function App() {
                       processNextScan();
 
                       return true;
-                      }
-                      } catch (e: any) {                    console.error("Invalid move", e);
+                    }
+                  } catch (e: any) {
+                    console.error("Invalid move", e);
                     alert(`Invalid move: ${e.message}`);
                   }
                   return false;
@@ -455,6 +495,11 @@ function App() {
                   } : {})
                 }}
               />
+              {currentStatus && (
+                <div className="game-over-overlay">
+                  <div className="game-over-badge">{currentStatus}</div>
+                </div>
+              )}
             </div>
           </div>
           <div className="players-footer">
@@ -469,14 +514,33 @@ function App() {
             <button onClick={() => goToMove(currentIndex + 1)} disabled={currentIndex === allFens.length - 1} className="nav-btn">&gt;</button>
             <button onClick={() => goToMove(allFens.length - 1)} className="nav-btn">&gt;|</button>
           </div>
+          <div className="move-history">
+            <h3>History</h3>
+            <div className="history-list">
+              <span className={`move-item ${currentIndex === 0 ? 'active-move' : ''}`} onClick={() => goToMove(0)}>Start</span>
+              {moveHistory.map((move, index) => (
+                <span key={index} className={`move-item ${index + 1 === currentIndex ? 'active-move' : ''}`} onClick={() => goToMove(index + 1)}>
+                  {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''}{move}{' '}
+                </span>
+              ))}
+            </div>
+          </div>
           <div className="eval-bar-container">
-            <div className="eval-info"><p>Evaluation: <strong>{evaluation || 'Calculating...'}</strong></p><p>Move: <strong>{currentIndex} / {allFens.length - 1}</strong></p></div>
+            <div className="eval-info">
+              {currentStatus ? (
+                <p className="game-status-text">Result: <strong>{currentStatus}</strong></p>
+              ) : (
+                <p>Evaluation: <strong>{evaluation || 'Calculating...'}</strong> <span className="engine-timer">({elapsedTime})</span></p>
+              )}
+              <p>Move: <strong>{currentIndex} / {allFens.length - 1}</strong></p>
+            </div>
             <button onClick={() => {
               const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
               setAllFens([startFen]);
               setMoveHistory([]);
               setCurrentIndex(0);
               setFen(startFen);
+              setPgnResult(null);
               graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
               statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
               opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
@@ -488,13 +552,13 @@ function App() {
         <div className="sidebar">
           <div className="graph-container">
             <div className="graph-header">
-              <h3>Evaluation Graph</h3>
+              <h3>Evaluation Graph <span className="engine-timer-small">({elapsedTime})</span></h3>
               <div className="current-eval-badge">
                 {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
               </div>
             </div>
             <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} />
+              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} />
             </div>
             <div className="quality-indicator-wrapper">
               {qualityInfo && (
@@ -546,7 +610,6 @@ function App() {
             </table>
           </div>
           <div className="chess-com-import"><h3>Chess.com Import ({chessComUsername})</h3><button onClick={fetchGames} disabled={loadingGames}>{loadingGames ? '...' : 'Fetch Recent Games'}</button><div className="games-list">{chessComGames.map((g, i) => (<div key={i} className="game-item" onClick={() => processPgn(g.pgn)}>{g.white.username} vs {g.black.username}</div>))}</div></div>
-          <div className="move-history"><h3>History</h3><div className="history-list"><span className={`move-item ${currentIndex === 0 ? 'active-move' : ''}`} onClick={() => goToMove(0)}>Start</span>{moveHistory.map((move, index) => (<span key={index} className={`move-item ${index + 1 === currentIndex ? 'active-move' : ''}`} onClick={() => goToMove(index + 1)}>{index % 2 === 0 ? `${Math.floor(index/2) + 1}. ` : ''}{move}{' '}</span>))}</div></div>
         </div>
       </main>
     </div>

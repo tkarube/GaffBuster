@@ -5,11 +5,19 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 ## Features
 
 - **Real-time Evaluation**: Powered by Stockfish 18 (BMI2 optimized for x86-64-v3).
-- **Game Import**: Fetch games directly from Chess.com via username.
-- **Interactive Graph**: Visualize the flow of the game and identify critical moments.
-- **Move Classification**: Understand "Brilliant", "Great", and "Blunder" moves.
-- **Improved Responsiveness**: Fixed move-snapback issues on modern browsers and React 19 by optimizing component re-renders.
-- **Secure Access**: Built-in Basic Authentication and HTTPS support.
+- **Deep Analysis**: Stockfish thinks for up to **5 minutes** per position for high-quality evaluations.
+- **Game Import**: Fetch games directly from Chess.com via username or load custom PGNs.
+- **Interactive & Adaptive Graph**: Visualize evaluation trends. The graph **automatically inverts** when you flip the board, so "up" always means "advantage for the side at the bottom."
+- **Move Classification**: Understand "Brilliant", "Great", and "Blunder" moves with visual icons and a summary panel.
+- **Real-time Analysis Timer**: A live countdown timer shows exactly how long Stockfish has been analyzing the current position, ensuring you know the depth of the evaluation.
+- **Game Status & Results**: Clearly see the game outcome (Checkmate, Stalemate, Draw) with board overlays and status indicators.
+- **Optimized UI**:
+  - Horizontal **Move History** located directly below the board for better focus.
+  - Responsive layout that works well on different screen sizes.
+  - Smooth piece animations and intuitive controls (Arrow keys support).
+- **Secure Access & Hardening**:
+  - Built-in Basic Authentication and HTTPS support.
+  - **Security Hardening**: Robust input validation and authenticated WebSocket upgrades to prevent unauthorized engine access.
 
 ---
 
@@ -88,6 +96,7 @@ Manage the users and passwords for the Basic Authentication login.
 Configure the Stockfish engine performance and default settings.
 - **`threads`**: Number of CPU cores to be used by Stockfish. Increase this for faster analysis.
 - **`hash`**: Memory (MB) allocated to the engine's hash table.
+- **`scanDepth`**: The analysis depth (number of half-moves) for the evaluation graph and game review. Increase this for higher precision, or decrease it for faster processing (default is 18).
 - **`chessComUsername`**: The default Chess.com username used to fetch games.
 
 ```json

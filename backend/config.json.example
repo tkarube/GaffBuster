@@ -1,5 +1,6 @@
 {
   "threads": 4,
   "hash": 512,
+  "scanDepth": 18,
   "chessComUsername": "YOUR_CHESS_COM_USERNAME"
 }

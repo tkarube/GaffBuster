@@ -122,13 +122,21 @@ wss.on('connection', (ws) => {
         stockfishScan.stdin.write('uci\n');
         stockfishScan.stdin.write('isready\n');
       } else if (command.type === 'position') {
+        if (typeof command.fen !== 'string' || command.fen.includes('\n') || command.fen.includes('\r')) {
+           console.error('Invalid FEN detected');
+           return;
+        }
         stockfish.stdin.write(`stop\n`);
         stockfish.stdin.write(`position fen ${command.fen}\n`);
-        stockfish.stdin.write(`go infinite\n`);
+        stockfish.stdin.write(`go movetime 300000\n`);
       } else if (command.type === 'scan_position') {
+        if (typeof command.fen !== 'string' || command.fen.includes('\n') || command.fen.includes('\r')) {
+           console.error('Invalid FEN detected');
+           return;
+        }
         stockfishScan.stdin.write(`stop\n`);
         stockfishScan.stdin.write(`position fen ${command.fen}\n`);
-        stockfishScan.stdin.write(`go depth 12\n`);
+        stockfishScan.stdin.write(`go depth ${config.scanDepth || 18}\n`);
       } else if (command.type === 'stop') {
         stockfish.stdin.write('stop\n');
         stockfishScan.stdin.write('stop\n');
