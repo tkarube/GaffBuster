@@ -15,6 +15,8 @@ setup:
 	@echo "Setting up configuration files..."
 	@if [ ! -f backend/config.json ]; then cp backend/config.json.example backend/config.json; fi
 	@if [ ! -f backend/users.json ]; then cp backend/users.json.example backend/users.json; fi
+	@echo "Installing dependencies..."
+	npm run install-all
 	@echo "Generating SSL certificates..."
 	@mkdir -p certs
 	@if [ ! -f certs/key.pem ]; then \
@@ -38,7 +40,7 @@ restart:
 	docker compose restart
 
 add-user:
-	node backend/manage-users.js
+	node backend/manage-users.js $(user) $(pass)
 
 logs:
 	docker compose logs -f -t
