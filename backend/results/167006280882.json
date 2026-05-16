@@ -340,6 +340,21 @@
       "move": 66,
       "fen": "3r1k2/2pPNnp1/1p3p1p/1P4q1/2B3Q1/7P/5PPK/8 w - - 3 34",
       "eval": 0
+    },
+    {
+      "move": 67,
+      "fen": "3r1k2/2pPNnp1/1p2Qp1p/1P4q1/2B5/7P/5PPK/8 b - - 4 34",
+      "eval": 0
+    },
+    {
+      "move": 68,
+      "fen": "3r1k2/2pPNnp1/1p2Qp1p/1P2q3/2B5/7P/5PPK/8 w - - 5 35",
+      "eval": 0
+    },
+    {
+      "move": 69,
+      "fen": "3r1k2/2pPNnp1/1p2Qp1p/1P2q3/2B5/6PP/5P1K/8 b - - 0 35",
+      "eval": 0
     }
   ]
 }
