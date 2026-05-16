@@ -1,6 +1,6 @@
-# GaffBuster ♟️ (v2.0 beta 2)
+# GaffBuster ♟️ (v2.0)
 
-GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 beta 0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
+GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
 
 ## Key Features
 
@@ -20,27 +20,31 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 
 ### 1. Prerequisites
 - Docker & Docker Compose
-- Node.js (for initial setup)
+- Node.js (v18 or higher recommended)
 
 ### 2. Initial Configuration
-Run the setup command to generate configuration files:
+Run the setup command to generate configuration files and install dependencies:
 ```bash
 make setup
 ```
 
 Edit `backend/config.json` to customize your Chess.com username and CPU resource allocation.
 
-### 3. Secure Password Configuration (Mandatory)
-In v2.0, both usernames and passwords must be secured. Use the provided interactive tool:
+### 3. User Management
+In v2.0, both usernames and passwords must be secured. Use the provided tool:
 
-1. Run the following command:
-   ```bash
-   make add-user
-   ```
-2. Follow the prompts to enter your **username** and **password**.
-   - Input is securely masked with `*` in the terminal.
-   - For non-interactive automation, you can also use: `node backend/manage-users.js <user> <pass>`.
-3. The tool automatically hashes both (SHA-256 for username, bcrypt for password) and saves them to `backend/users.json`.
+#### Interactive Mode
+```bash
+make add-user
+```
+Follow the prompts to enter your **username** and **password**. Input is securely masked in the terminal.
+
+#### Command Line Mode (Automation)
+```bash
+make add-user user=your_username pass=your_password
+```
+
+The tool hashes credentials (SHA-256 for username, bcrypt for password) and saves them to `backend/users.json`.
 
 ### 4. Running the Application
 ```bash
