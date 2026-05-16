@@ -3,11 +3,20 @@ const fs = require('fs');
 const path = require('path');
 const { Chess } = require('chess.js');
 const axios = require('axios');
+const os = require('os');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const ANALYZED_GAMES_PATH = path.join(__dirname, 'analyzed_games.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
 const PAUSE_FILE = path.join(RESULTS_DIR, 'bot_pause.signal');
+
+const totalCores = (() => {
+    try {
+        return parseInt(require('child_process').execSync('nproc').toString().trim()) || 1;
+    } catch (e) {
+        return 1;
+    }
+})();
 
 if (!fs.existsSync(RESULTS_DIR)) {
     fs.mkdirSync(RESULTS_DIR);
@@ -48,9 +57,16 @@ class EngineManager {
 
     start() {
         return new Promise((resolve) => {
-            const totalCores = parseInt(require('child_process').execSync('nproc').toString().trim()) || 1;
-            // Spawn Stockfish with a higher nice value (lower priority)
-            this.stockfish = spawn('nice', ['-n', '10', 'stockfish']);
+            // Spawn Stockfish directly (no nice wrapper to avoid leaks)
+            this.stockfish = spawn('stockfish');
+            
+            // Set priority using native Node.js API (10 is equivalent to nice -n 10)
+            try {
+                os.setPriority(this.stockfish.pid, 10);
+            } catch (e) {
+                log(`[Bot] Failed to set priority for PID ${this.stockfish.pid}: ${e.message}`);
+            }
+
             this.stockfish.stdout.on('data', (data) => {
                 const lines = data.toString().split('\n');
                 for (const line of lines) {
@@ -78,7 +94,7 @@ class EngineManager {
             this.stockfish.stdin.write('uci\n');
             const requestedThreads = this.config.analysisThreads || this.config.threads || 1;
             const threads = Math.min(requestedThreads, totalCores);
-            log(`[Bot] Setting engine threads to ${threads} (requested: ${requestedThreads}, system cores: ${totalCores})`);
+            log(`[Bot] Engine threads: ${threads} (requested: ${requestedThreads}, system cores: ${totalCores})`);
             this.stockfish.stdin.write(`setoption name Threads value ${threads}\n`);
             this.stockfish.stdin.write(`setoption name Hash value ${this.config.hash || 128}\n`);
             this.stockfish.stdin.write('isready\n');
@@ -107,7 +123,9 @@ class EngineManager {
     stop() {
         if (this.stockfish) {
             try {
-                this.stockfish.stdin.write('quit\n');
+                if (this.stockfish.stdin && this.stockfish.stdin.writable) {
+                    this.stockfish.stdin.write('quit\n');
+                }
             } catch (e) {}
             this.stockfish.kill();
             this.stockfish = null;
@@ -266,6 +284,16 @@ const INTERVAL = getInterval();
 log(`[Bot] Scheduled every ${INTERVAL / 1000 / 60} minutes`);
 runBot();
 const mainInterval = setInterval(runBot, INTERVAL);
+
+// Watch for pause signal removal to trigger immediate check
+if (fs.existsSync(RESULTS_DIR)) {
+    fs.watch(RESULTS_DIR, (eventType, filename) => {
+        if (filename === 'bot_pause.signal' && !fs.existsSync(PAUSE_FILE)) {
+            log('[Bot] Resume signal detected - Triggering immediate game check');
+            runBot();
+        }
+    });
+}
 
 // Graceful Shutdown
 const shutdown = () => {

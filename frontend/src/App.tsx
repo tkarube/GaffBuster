@@ -111,6 +111,7 @@ const formatPgnDate = (date: string, time: string, tz: string) => {
 function App() {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [allFens, setAllFens] = useState<string[]>(['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']);
+  const allFensRef = useRef<string[]>(['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']);
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [pgn, setPgn] = useState('');
@@ -149,13 +150,10 @@ function App() {
   const scanQueueRef = useRef<{fen: string, index: number}[]>([]);
   const isScanningRef = useRef<number | false>(false);
   const currentMoveQualityRef = useRef<any>(null);
+  const lastAnalyzedFenRef = useRef<string | null>(null);
 
   useEffect(() => {
     fenRef.current = fen;
-    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'toggle_pause', shouldPause: fen !== startFen }));
-    }
   }, [fen]);
 
   const processNextScan = useCallback(() => {
@@ -176,19 +174,23 @@ function App() {
     const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     if (socketRef.current?.readyState === WebSocket.OPEN && fenRef.current) {
       if (fenRef.current === startFen) {
-        console.log('Skipping analysis for initial position');
-        setAnalysisStartTime(null);
+        console.log('[App] Skipping main analysis for initial position');
         evalRef.current = '0.00';
         setEvaluation('0.00');
         setCandidates([]);
         socketRef.current.send(JSON.stringify({ type: 'stop' }));
         return;
       }
-      candidatesRef.current = [];
-      evalRef.current = null;
-      setAnalysisStartTime(Date.now());
-      socketRef.current.send(JSON.stringify({ type: 'stop' }));
-      socketRef.current.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
+      
+      if (evalRef.current === null || lastAnalyzedFenRef.current !== fenRef.current) {
+        console.log('[App] Requesting main analysis');
+        lastAnalyzedFenRef.current = fenRef.current;
+        candidatesRef.current = [];
+        evalRef.current = null;
+        setAnalysisStartTime(Date.now());
+        socketRef.current.send(JSON.stringify({ type: 'stop' }));
+        socketRef.current.send(JSON.stringify({ type: 'position', fen: fenRef.current }));
+      }
     }
   }, []);
 
@@ -228,7 +230,7 @@ function App() {
     const socket = new WebSocket(`${protocol}//${window.location.hostname}:${wsPort}/ws`);
     socketRef.current = socket;
     socket.onopen = () => {
-      console.log('WebSocket Connected');
+      console.log('[App] WebSocket Connected');
       socket.send(JSON.stringify({ type: 'uci' }));
       if (scanQueueRef.current.length === 0) {
         startMainAnalysis();
@@ -299,9 +301,11 @@ function App() {
           const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
           if (cpMatch || mateMatch) {
             const lastIdx = isScanningRef.current;
-            if (typeof lastIdx === 'number') {
-              const pov = (lastIdx % 2 === 0) ? 1 : -1;
-              let score = cpMatch ? (pov * parseInt(cpMatch[1]) / 100) : (pov * (parseInt(mateMatch![1]) > 0 ? 10 : -10));
+            if (typeof lastIdx === 'number' && allFensRef.current[lastIdx]) {
+              // Always store score from White's perspective for the graph
+              const sideToMove = allFensRef.current[lastIdx].includes(' w ') ? 1 : -1;
+              let score = cpMatch ? (sideToMove * parseInt(cpMatch[1]) / 100) : (sideToMove * (parseInt(mateMatch![1]) > 0 ? 10 : -10));
+              
               score = Math.max(-10, Math.min(10, score));
               const newData = [...graphDataRef.current];
               while (newData.length <= lastIdx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
@@ -319,6 +323,10 @@ function App() {
               newData[lastIdx] = { move: lastIdx, eval: score, quality };
               graphDataRef.current = newData;
               currentMoveQualityRef.current = quality;
+              
+              // Force immediate state update for the graph to ensure real-time rendering
+              setGraphData([...newData]);
+              console.log(`[App] Received scan result for move ${lastIdx}: ${score}`);
             }
           }
         }
@@ -329,7 +337,6 @@ function App() {
 
   useEffect(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN && fen) {
-      // Don't block main analysis during background scan
       startMainAnalysis();
     }
   }, [fen, startMainAnalysis]);
@@ -405,6 +412,7 @@ function App() {
       setEvaluation(null);
 
       setAllFens(fens);
+      allFensRef.current = fens;
       setLastMoveSquares(moveSqs);
       setMoveHistory(history.map(m => m.san));
       setPgnResult(tempGame.header().Result || null);
@@ -417,7 +425,6 @@ function App() {
       const gameUrl = tempGame.header().Link || '';
       const gameId = gameUrl.split('/').pop();
 
-      // IMPORTANT: Initialize graph and stats before fetching/scanning
       graphDataRef.current = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' }));
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
@@ -599,6 +606,7 @@ function App() {
                       const nextFens = allFens.slice(0, currentIndex + 1);
                       nextFens.push(game.fen());
                       setAllFens(nextFens);
+                      allFensRef.current = nextFens;
                       const nextMoveSqs = lastMoveSquares.slice(0, currentIndex + 1);
                       nextMoveSqs.push({ from: s, to: t });
                       setLastMoveSquares(nextMoveSqs);
@@ -677,6 +685,7 @@ function App() {
             <button onClick={() => {
               const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
               setAllFens([startFen]);
+              allFensRef.current = [startFen];
               setMoveHistory([]);
               setCurrentIndex(0);
               setFen(startFen);
@@ -693,7 +702,7 @@ function App() {
         <div className="sidebar">
           <div className="graph-container">
             <div className="graph-header">
-              <h3>Evaluation Graph <span className="engine-timer-small">({elapsedTime})</span></h3>
+              <h3>Evaluation Graph</h3>
               {isPreAnalyzed && <span className="pre-analyzed-badge">Deep Analysis (Depth {isPreAnalyzed})</span>}
               <div className="current-eval-badge">
                 {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
@@ -734,7 +743,10 @@ function App() {
             </div>
           </div>
           <div className="candidates-list">
-            <h3>Top Lines</h3>
+            <div className="candidates-header">
+              <h3>Top Lines</h3>
+              <span className="engine-timer-inline">({elapsedTime})</span>
+            </div>
             <div className="arrow-legend">
               <span className="legend-item"><span className="dot best"></span>Best</span>
               <span className="legend-item"><span className="dot second"></span>2nd</span>
