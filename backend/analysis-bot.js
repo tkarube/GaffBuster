@@ -57,15 +57,12 @@ class EngineManager {
 
     start() {
         return new Promise((resolve) => {
-            // Spawn Stockfish directly (no nice wrapper to avoid leaks)
             this.stockfish = spawn('stockfish');
             
             // Set priority using native Node.js API (10 is equivalent to nice -n 10)
             try {
                 os.setPriority(this.stockfish.pid, 10);
-            } catch (e) {
-                log(`[Bot] Failed to set priority for PID ${this.stockfish.pid}: ${e.message}`);
-            }
+            } catch (e) {}
 
             this.stockfish.stdout.on('data', (data) => {
                 const lines = data.toString().split('\n');
@@ -92,10 +89,8 @@ class EngineManager {
             });
 
             this.stockfish.stdin.write('uci\n');
-            const requestedThreads = this.config.analysisThreads || this.config.threads || 1;
-            const threads = Math.min(requestedThreads, totalCores);
-            log(`[Bot] Engine threads: ${threads} (requested: ${requestedThreads}, system cores: ${totalCores})`);
-            this.stockfish.stdin.write(`setoption name Threads value ${threads}\n`);
+            const threads = this.config.analysisThreads || this.config.threads || 1;
+            this.stockfish.stdin.write(`setoption name Threads value ${Math.min(threads, totalCores)}\n`);
             this.stockfish.stdin.write(`setoption name Hash value ${this.config.hash || 128}\n`);
             this.stockfish.stdin.write('isready\n');
         });
@@ -109,7 +104,7 @@ class EngineManager {
                 log(`[Bot] Evaluation timeout for FEN: ${fen}`);
                 this.resolver = null;
                 resolve(0);
-            }, 60000); // 1 minute safety timeout
+            }, 60000);
 
             this.resolver = (val) => {
                 clearTimeout(timer);
@@ -134,6 +129,7 @@ class EngineManager {
 }
 
 let currentEngine = null;
+let isRunning = false;
 
 async function analyzeGame(game, config) {
     const depth = config.analysisDepth || 24;
@@ -150,7 +146,7 @@ async function analyzeGame(game, config) {
     }
     
     const history = chess.history({ verbose: true });
-    const fens = [new Chess().fen()]; // Initial position
+    const fens = [new Chess().fen()];
     let tempChess = new Chess();
     for (const move of history) {
         tempChess.move(move);
@@ -183,7 +179,7 @@ async function analyzeGame(game, config) {
                 currentEngine = null;
             }
             while (isPaused()) {
-                await new Promise(r => setTimeout(r, 1000)); // Faster check (1s)
+                await new Promise(r => setTimeout(r, 2000));
             }
             log(`[Bot] RESUMED - Starting engine to continue at position ${i}`);
         }
@@ -193,7 +189,7 @@ async function analyzeGame(game, config) {
             await currentEngine.start();
         }
 
-        if (i % 5 === 0 || i === fens.length - 1) {
+        if (i % 10 === 0 || i === fens.length - 1) {
             log(`  [Bot] Progress: ${i}/${fens.length - 1}`);
         }
         
@@ -218,8 +214,6 @@ async function analyzeGame(game, config) {
     if (!fs.existsSync(PGNS_DIR)) fs.mkdirSync(PGNS_DIR);
     fs.writeFileSync(path.join(PGNS_DIR, `${gameId}.pgn`), game.pgn);
 }
-
-let isRunning = false;
 
 async function runBot() {
     if (isRunning) return;
@@ -250,11 +244,9 @@ async function runBot() {
         const archivesRes = await axios.get(`https://api.chess.com/pub/player/${username}/games/archives`);
         const archives = archivesRes.data.archives;
         if (archives && archives.length > 0) {
-            // Reverse archives to check the latest month first
             const lastTwoArchives = archives.slice(-2).reverse();
             for (const archiveUrl of lastTwoArchives) {
                 const gamesRes = await axios.get(archiveUrl);
-                // Reverse games in the archive to analyze the most recent ones first
                 const games = gamesRes.data.games.reverse();
                 for (const game of games) {
                     if (game.rules === 'chess' && !analyzedGames.includes(game.url)) {
@@ -272,36 +264,29 @@ async function runBot() {
     isRunning = false;
 }
 
-function getInterval() {
-    try {
-        const config = JSON.parse(fs.readFileSync(CONFIG_PATH));
-        if (config.analysisIntervalHours) return config.analysisIntervalHours * 3600000;
-    } catch (e) {}
-    return 3600000;
-}
-
-const INTERVAL = getInterval();
-log(`[Bot] Scheduled every ${INTERVAL / 1000 / 60} minutes`);
+const INTERVAL = 3600000;
+log(`[Bot] Starting loop...`);
 runBot();
 const mainInterval = setInterval(runBot, INTERVAL);
 
-// Watch for pause signal removal to trigger immediate check
+let watchTimer = null;
 if (fs.existsSync(RESULTS_DIR)) {
     fs.watch(RESULTS_DIR, (eventType, filename) => {
         if (filename === 'bot_pause.signal' && !fs.existsSync(PAUSE_FILE)) {
-            log('[Bot] Resume signal detected - Triggering immediate game check');
-            runBot();
+            if (watchTimer) return;
+            watchTimer = setTimeout(() => {
+                log('[Bot] Resume signal - Triggering check');
+                runBot();
+                watchTimer = null;
+            }, 5000); // Throttled resume
         }
     });
 }
 
-// Graceful Shutdown
 const shutdown = () => {
     log('[Bot] Shutting down bot...');
     clearInterval(mainInterval);
-    if (currentEngine) {
-        currentEngine.stop();
-    }
+    if (currentEngine) currentEngine.stop();
     process.exit(0);
 };
 

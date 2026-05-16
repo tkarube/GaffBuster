@@ -1,4 +1,4 @@
-# GaffBuster ♟️ (v2.0-beta1)
+# GaffBuster ♟️ (v2.0-beta2)
 
 GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
 
@@ -12,7 +12,7 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
     - **Frontend Priority**: Background bot fully stops its engines when the browser is open to give 100% resources to your current task.
     - **Native Priority Control**: Uses OS-level process prioritization (`nice` equivalent) to ensure the Evaluation Graph builder and Main engine share CPU cores without lag.
 - **Enhanced Security**:
-    - **Secure Passwords**: Mandatory `bcrypt` hashing for user credentials.
+    - **Secure Passwords**: Mandatory `bcryptjs` hashing for user credentials (portable and dependency-free).
     - **Rate Limiting**: Protection against brute-force attacks on the API.
     - **Robust Handshaking**: Secure WebSocket communication for real-time analysis.
 
@@ -20,7 +20,7 @@ GaffBuster is a powerful, web-based chess analysis application powered by the **
 
 ### 1. Prerequisites
 - Docker & Docker Compose
-- Node.js (for initial password setup)
+- Node.js (for initial setup)
 
 ### 2. Initial Configuration
 Run the setup command to generate configuration files:
@@ -28,23 +28,19 @@ Run the setup command to generate configuration files:
 make setup
 ```
 
-Edit `backend/config.json` to customize:
-- `chessComUsername`: Your Chess.com username.
-- `threads`: Base CPU cores (doubled to 16 when using the frontend).
-- `analysisThreads`: Cores dedicated to background analysis.
-- `analysisDepth`: Target depth for background bot (e.g., 24-30).
-- `timezone`: Your local timezone (e.g., `Asia/Tokyo`).
+Edit `backend/config.json` to customize your Chess.com username and CPU resource allocation.
 
 ### 3. Secure Password Configuration (Mandatory)
 In v2.0, both usernames and passwords must be secured. Use the provided interactive tool:
 
-1. Run the following command in your terminal:
+1. Run the following command:
    ```bash
    make add-user
    ```
-2. Follow the prompts to enter your desired **username** and **password**.
-3. The tool will automatically hash both (SHA-256 for username, bcrypt for password) and save them to `backend/users.json`.
-4. Your configuration is now secure and safe for public repositories.
+2. Follow the prompts to enter your **username** and **password**.
+   - Input is securely masked with `*` in the terminal.
+   - For non-interactive automation, you can also use: `node backend/manage-users.js <user> <pass>`.
+3. The tool automatically hashes both (SHA-256 for username, bcrypt for password) and saves them to `backend/users.json`.
 
 ### 4. Running the Application
 ```bash
