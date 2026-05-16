@@ -1,6 +1,6 @@
-# GaffBuster ♟️ (v2.0-beta2)
+# GaffBuster ♟️ (v2.0 beta 2)
 
-GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
+GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 beta 0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
 
 ## Key Features
 
