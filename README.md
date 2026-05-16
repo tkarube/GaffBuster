@@ -36,17 +36,15 @@ Edit `backend/config.json` to customize:
 - `timezone`: Your local timezone (e.g., `Asia/Tokyo`).
 
 ### 3. Secure Password Configuration (Mandatory)
-1. Open `backend/users.json` and add your users with **plain-text** passwords:
-   ```json
-   {
-     "admin": "your_secure_password"
-   }
-   ```
-2. Run the hashing utility:
+In v2.0, both usernames and passwords must be secured. Use the provided interactive tool:
+
+1. Run the following command in your terminal:
    ```bash
-   node backend/hash-passwords.js
+   make add-user
    ```
-   This converts passwords into secure `bcrypt` hashes.
+2. Follow the prompts to enter your desired **username** and **password**.
+3. The tool will automatically hash both (SHA-256 for username, bcrypt for password) and save them to `backend/users.json`.
+4. Your configuration is now secure and safe for public repositories.
 
 ### 4. Running the Application
 ```bash

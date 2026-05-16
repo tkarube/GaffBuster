@@ -37,6 +37,9 @@ down:
 restart:
 	docker compose restart
 
+add-user:
+	node backend/manage-users.js
+
 logs:
 	docker compose logs -f -t
 

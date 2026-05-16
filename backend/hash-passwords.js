@@ -1,4 +1,5 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -12,27 +13,40 @@ if (!fs.existsSync(usersPath)) {
 const users = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
 const saltRounds = 10;
 
-async function hashPasswords() {
-    const hashedUsers = {};
-    for (const [username, password] of Object.entries(users)) {
-        // Check if already hashed (bcrypt hashes start with $2b$ or $2a$)
-        if (password.startsWith('$2b$') || password.startsWith('$2a$')) {
-            console.log(`User "${username}" already has a hashed password. Skipping.`);
-            hashedUsers[username] = password;
-            continue;
-        }
-        
-        console.log(`Hashing password for user: ${username}...`);
-        const hashed = await bcrypt.hash(password, saltRounds);
-        hashedUsers[username] = hashed;
-    }
-    
-    fs.writeFileSync(usersPath, JSON.stringify(hashedUsers, null, 2));
-    console.log('\nSuccess! users.json has been updated with hashed passwords.');
-    console.log('IMPORTANT: Please restart your containers with "make restart" to apply changes.');
+function hashUsername(name) {
+    return crypto.createHash('sha256').update(name).digest('hex');
 }
 
-hashPasswords().catch(err => {
-    console.error('Error hashing passwords:', err);
+async function hashAll() {
+    const newUsers = {};
+    let count = 0;
+
+    for (const [key, value] of Object.entries(users)) {
+        // If the key is already a 64-char hex string (SHA-256) AND the value is a bcrypt hash
+        // then we assume it's already processed.
+        const isKeyHashed = /^[a-f0-9]{64}$/.test(key);
+        const isValueHashed = value.startsWith('$2b$') || value.startsWith('$2a$');
+
+        if (isKeyHashed && isValueHashed) {
+            console.log(`Entry with hash starting "${key.substring(0, 8)}..." is already secured. Skipping.`);
+            newUsers[key] = value;
+            continue;
+        }
+
+        console.log(`Securing credentials for user: ${key}...`);
+        const userHash = hashUsername(key);
+        const passHash = await bcrypt.hash(value, saltRounds);
+        newUsers[userHash] = passHash;
+        count++;
+    }
+    
+    fs.writeFileSync(usersPath, JSON.stringify(newUsers, null, 2));
+    console.log(`\nSuccess! ${count} new user(s) secured in users.json.`);
+    console.log('Usernames are now SHA-256 hashes and passwords are bcrypt hashes.');
+    console.log('IMPORTANT: Restart containers with "make restart" to apply changes.');
+}
+
+hashAll().catch(err => {
+    console.error('Error during hashing:', err);
     process.exit(1);
 });

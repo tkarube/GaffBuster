@@ -11,6 +11,7 @@ const basicAuth = require('express-basic-auth');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const os = require('os');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -40,9 +41,11 @@ const server = https.createServer(options, app);
 
 const authOptions = {
     authorizer: (username, password, cb) => {
-        const hashed = users[username];
-        if (!hashed) return cb(null, false);
-        bcrypt.compare(password, hashed, (err, res) => cb(err, res));
+        // Hash input username to find it in the secured users map
+        const userHash = crypto.createHash('sha256').update(username).digest('hex');
+        const hashedPassword = users[userHash];
+        if (!hashedPassword) return cb(null, false);
+        bcrypt.compare(password, hashedPassword, (err, res) => cb(err, res));
     },
     authorizeAsync: true,
     challenge: true,
@@ -101,7 +104,24 @@ const proxy = createProxyMiddleware({ target: FRONTEND_URL, changeOrigin: true, 
 server.on('upgrade', (req, socket, head) => {
     const pathname = req.url.split('?')[0];
     if (pathname === '/ws') {
-        wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+        // Verify credentials for WebSocket upgrade
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Chess Analysis Tool"\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+        
+        const [user, pass] = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
+        const userHash = crypto.createHash('sha256').update(user).digest('hex');
+        const hashedPass = users[userHash];
+        
+        if (hashedPass && bcrypt.compareSync(pass, hashedPass)) {
+            wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+        } else {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+        }
     } else {
         proxy.upgrade(req, socket, head);
     }
