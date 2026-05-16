@@ -226,8 +226,8 @@ function App() {
   // WebSocket for Analysis
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsPort = window.location.port === '5173' ? '5000' : window.location.port;
-    const socket = new WebSocket(`${protocol}//${window.location.hostname}:${wsPort}/ws`);
+    // Use the same host/port as the current page for maximum compatibility
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
     socketRef.current = socket;
     socket.onopen = () => {
       console.log('[App] WebSocket Connected');
@@ -599,36 +599,45 @@ function App() {
             <div className="board-wrapper" onContextMenu={(e) => e.preventDefault()}>
               <Chessboard position={fen} boardOrientation={boardOrientation}
                 onPieceDrop={(s, t) => {
+                  // Only allow moves at the latest position to avoid invalid move errors
+                  if (currentIndex !== allFens.length - 1) {
+                    return false;
+                  }
+
                   const game = new Chess(fen);
                   try {
                     const move = game.move({ from: s, to: t, promotion: 'q' });
                     if (move) {
-                      const nextFens = allFens.slice(0, currentIndex + 1);
-                      nextFens.push(game.fen());
-                      setAllFens(nextFens);
-                      allFensRef.current = nextFens;
-                      const nextMoveSqs = lastMoveSquares.slice(0, currentIndex + 1);
-                      nextMoveSqs.push({ from: s, to: t });
-                      setLastMoveSquares(nextMoveSqs);
-                      const nextHistory = moveHistory.slice(0, currentIndex);
-                      nextHistory.push(move.san);
-                      setMoveHistory(nextHistory);
-                      setCurrentIndex(nextFens.length - 1);
-                      setFen(game.fen());
+                      const newFen = game.fen();
+                      
+                      setAllFens(prev => {
+                        const next = [...prev, newFen];
+                        allFensRef.current = next;
+                        return next;
+                      });
 
-                      const newIndex = nextFens.length - 1;
+                      setLastMoveSquares(prev => [...prev, { from: s, to: t }]);
+                      setMoveHistory(prev => [...prev, move.san]);
+                      setCurrentIndex(prev => prev + 1);
+                      setFen(newFen);
+
+                      const newIndex = allFens.length; // Length before state update
                       const newPoint = { move: newIndex, eval: graphDataRef.current[newIndex - 1]?.eval || 0, quality: 'normal' };
-                      if (graphDataRef.current.length <= newIndex) {
-                        graphDataRef.current = [...graphDataRef.current, newPoint];
+                      
+                      const updatedGraph = [...graphDataRef.current];
+                      if (updatedGraph.length <= newIndex) {
+                        updatedGraph.push(newPoint);
+                        graphDataRef.current = updatedGraph;
+                        setGraphData([...updatedGraph]);
                       }
-                      scanQueueRef.current.push({ fen: game.fen(), index: newIndex });
+                      
+                      scanQueueRef.current.push({ fen: newFen, index: newIndex });
                       processNextScan();
 
                       return true;
                     }
                   } catch (e: any) {
-                    console.error("Invalid move", e);
-                    alert(`Invalid move: ${e.message}`);
+                    console.error("Move error:", e);
                   }
                   return false;
                 }}
