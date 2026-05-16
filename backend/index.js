@@ -2,19 +2,28 @@ const express = require('express');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
-const { Chess } = require('chess.js');
-const cors = require('cors');
+const { WebSocketServer } = require('ws');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const os = require('os');
 const basicAuth = require('express-basic-auth');
 const bcrypt = require('bcryptjs');
-const rateLimit = require('express-rate-limit');
-const os = require('os');
 const crypto = require('crypto');
+const cors = require('cors');
+const { Chess } = require('chess.js');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '1mb' }));
+
+// Log basic info for every request
+app.use((req, res, next) => {
+    if (!req.path.startsWith('/_')) { // Ignore Vite HMR traffic in logs
+        console.log(`[Backend] HTTP ${req.method} ${req.path}`);
+    }
+    next();
+});
 
 const totalCores = (() => {
     try { return os.cpus().length || 1; } catch (e) { return 1; }
@@ -41,7 +50,6 @@ const server = https.createServer(options, app);
 
 const authOptions = {
     authorizer: (username, password, cb) => {
-        // Hash input username to find it in the secured users map
         const userHash = crypto.createHash('sha256').update(username).digest('hex');
         const hashedPassword = users[userHash];
         if (!hashedPassword) return cb(null, false);
@@ -60,6 +68,38 @@ app.use((req, res, next) => {
 
 app.get('/api/config', (req, res) => {
     res.json({ chessComUsername: config.chessComUsername || '', timezone: config.timezone || 'Asia/Tokyo' });
+});
+
+app.post('/api/save-analysis', (req, res) => {
+    const { gameId, evaluations, pgn, white, black, endTime } = req.body;
+    if (!gameId || !/^[a-z0-9-]+$/i.test(gameId)) return res.status(400).json({ error: 'Invalid data' });
+    
+    console.log(`[Backend] Saving frontend analysis: ${gameId} (${evaluations.length} positions)`);
+    const filePath = path.join(__dirname, 'results', `${gameId}.json`);
+    let data = { gameId, url: '', pgn, white, black, endTime, evaluations: [], analysisDepth: 18 };
+    
+    if (fs.existsSync(filePath)) {
+        try {
+            const existing = JSON.parse(fs.readFileSync(filePath));
+            data = { ...data, ...existing };
+        } catch (e) {}
+    }
+
+    // Merge new evaluations, giving precedence to existing ones if they have higher depth
+    // (In this simple version, we just append/overwrite based on move index)
+    const evMap = new Map();
+    data.evaluations.forEach(e => evMap.set(e.move, e));
+    evaluations.forEach(e => {
+        const existing = evMap.get(e.move);
+        // Only overwrite if existing is 0/normal (placeholder) or if we are intentional
+        if (!existing || existing.quality === 'normal') {
+            evMap.set(e.move, e);
+        }
+    });
+    data.evaluations = Array.from(evMap.values()).sort((a, b) => a.move - b.move);
+
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    res.json({ success: true });
 });
 
 app.get('/api/analysis/:gameId', (req, res) => {
@@ -104,7 +144,6 @@ const proxy = createProxyMiddleware({ target: FRONTEND_URL, changeOrigin: true, 
 server.on('upgrade', (req, socket, head) => {
     const pathname = req.url.split('?')[0];
     if (pathname === '/ws') {
-        // Verify credentials for WebSocket upgrade
         const authHeader = req.headers.authorization;
         if (!authHeader) {
             socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Chess Analysis Tool"\r\n\r\n');
@@ -131,23 +170,26 @@ app.use('/', proxy);
 
 let activeWs = null;
 const PAUSE_FILE = path.join(__dirname, 'results', 'bot_pause.signal');
-if (fs.existsSync(PAUSE_FILE)) fs.unlinkSync(PAUSE_FILE);
+if (fs.existsSync(PAUSE_FILE)) try { fs.unlinkSync(PAUSE_FILE); } catch(e) {}
 
 wss.on('connection', (ws) => {
     if (activeWs) activeWs.close();
     activeWs = ws;
     console.log('[Backend] Frontend connected - Bot PAUSED');
-    if (!fs.existsSync(PAUSE_FILE)) fs.writeFileSync(PAUSE_FILE, 'paused');
+    if (!fs.existsSync(PAUSE_FILE)) try { fs.writeFileSync(PAUSE_FILE, 'paused'); } catch(e) {}
 
     const stockfishMain = spawn('stockfish');
     const stockfishScan = spawn('stockfish');
     
     try {
-        os.setPriority(stockfishScan.pid, 0);
-        os.setPriority(stockfishMain.pid, 10);
+        os.setPriority(stockfishMain.pid, 0);
+        os.setPriority(stockfishScan.pid, 10);
     } catch (e) {}
 
     const setupEngine = (engine, label) => {
+        engine.on('error', (err) => console.error(`[Engine ${label}] Error:`, err));
+        engine.on('exit', (code, signal) => console.log(`[Engine ${label}] Exited with code ${code}, signal ${signal}`));
+
         let buffer = '';
         engine.stdout.on('data', (data) => {
             buffer += data.toString();
@@ -156,8 +198,15 @@ wss.on('connection', (ws) => {
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (trimmed) {
-                    if (label === 'scan' && trimmed.startsWith('bestmove')) ws.send(JSON.stringify({ type: 'scan_complete', engine: label }));
-                    else ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                    if (label === 'scan') {
+                        if (trimmed.startsWith('bestmove')) {
+                            ws.send(JSON.stringify({ type: 'scan_complete', engine: label }));
+                        } else if (trimmed.includes('score')) {
+                            ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                        }
+                    } else if (label === 'main') {
+                        ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                    }
                 }
             }
         });
@@ -169,10 +218,32 @@ wss.on('connection', (ws) => {
     ws.on('message', (msg) => {
         try {
             const cmd = JSON.parse(msg.toString());
+            console.log(`[Backend] Received command: ${cmd.type}`);
             if (cmd.type === 'uci') {
-                const threads = config.threads || totalCores || 1;
-                stockfishMain.stdin.write(`uci\nsetoption name Threads value ${threads}\nsetoption name Hash value ${config.hash || 128}\nsetoption name MultiPV value 3\nucinewgame\nisready\n`);
-                stockfishScan.stdin.write(`uci\nsetoption name Threads value ${threads}\nsetoption name Hash value ${config.hash || 128}\nucinewgame\nisready\n`);
+                const totalThreads = config.threads || totalCores || 1;
+                const totalHash = config.hash || 128;
+                
+                // Give all threads to both engines as requested (OS will handle contention)
+                const scanThreads = totalThreads;
+                const mainThreads = totalThreads;
+                
+                // Balance hash: give 25% to scan, 75% to main (min 32MB each)
+                const scanHash = Math.max(32, Math.floor(totalHash * 0.25));
+                const mainHash = Math.max(32, totalHash - scanHash);
+
+                console.log(`[Backend] UCI Setup - All threads (${totalThreads}) allocated to both engines`);
+
+                const initEngine = (engine, threads, hash, multipv) => {
+                    engine.stdin.write('uci\n');
+                    engine.stdin.write(`setoption name Threads value ${threads}\n`);
+                    engine.stdin.write(`setoption name Hash value ${hash}\n`);
+                    if (multipv) engine.stdin.write(`setoption name MultiPV value ${multipv}\n`);
+                    engine.stdin.write('ucinewgame\n');
+                    engine.stdin.write('isready\n');
+                };
+
+                initEngine(stockfishMain, mainThreads, mainHash, 3);
+                initEngine(stockfishScan, scanThreads, scanHash);
             } else if (cmd.type === 'position') {
                 const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
                 if (cmd.fen === startFen) {
@@ -182,7 +253,8 @@ wss.on('connection', (ws) => {
                 }
             } else if (cmd.type === 'scan_position') {
                 if (cmd.fen) {
-                    stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth 18\n`);
+                    const depth = config.scanDepth || 18;
+                    stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
                 }
             } else if (cmd.type === 'stop') {
                 stockfishMain.stdin.write('stop\n');

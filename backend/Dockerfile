@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install Stockfish 18 (BMI2 binary - optimized for x86-64-v3/v4 CPUs)
+# Download and install Stockfish 18 (BMI2 binary)
 RUN wget https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-ubuntu-x86-64-bmi2.tar -O stockfish.tar \
     && tar -xf stockfish.tar \
     && mv stockfish/stockfish-ubuntu-x86-64-bmi2 /usr/local/bin/stockfish \

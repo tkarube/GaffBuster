@@ -69,7 +69,7 @@ const CustomDot = (props: any) => {
   return <circle cx={cx} cy={cy} r={radius} fill={color} stroke="none" />;
 };
 
-const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation }: any) => {
+const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint }: any) => {
   if (data.length === 0) {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
@@ -83,13 +83,16 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={orientedData} 
-        onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex)}
+        onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex, true)}
         margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
       >
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" />
         <XAxis dataKey="move" hide />
         <YAxis domain={[-10, 10]} hide />
         <ReferenceLine y={0} stroke="#666" />
+        {branchingPoint !== null && (
+          <ReferenceLine x={branchingPoint} stroke="#ff9800" strokeWidth={2} strokeDasharray="5 5" label={{ value: 'Branch', position: 'top', fill: '#ff9800', fontSize: 10 }} />
+        )}
         <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
         <Line type="monotone" dataKey="displayEval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
       </LineChart>
@@ -126,6 +129,7 @@ function App() {
   const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
   const [localGames, setLocalGames] = useState<any[]>([]);
   const [loadingLocal, setLoadingLocal] = useState(false);
+  const [branchingPoint, setBranchingPoint] = useState<number | null>(null);
 
   const [evaluation, setEvaluation] = useState<string | null>(null);
 
@@ -144,8 +148,11 @@ function App() {
   const opponentStatsRef = useRef<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const userColorRef = useRef<'w' | 'b' | null>(null);
   const originalGameRef = useRef<any>(null);
-  
+  const originalGraphDataRef = useRef<GraphPoint[]>([]);
+  const currentGameIdRef = useRef<string | null>(null);
+
   const socketRef = useRef<WebSocket | null>(null);
+
   const fenRef = useRef(fen); 
   const scanQueueRef = useRef<{fen: string, index: number}[]>([]);
   const isScanningRef = useRef<number | false>(false);
@@ -156,8 +163,12 @@ function App() {
     fenRef.current = fen;
   }, [fen]);
 
+  const scanTimeoutRef = useRef<any>(null);
+
   const processNextScan = useCallback(() => {
-    if (isScanningRef.current !== false || scanQueueRef.current.length === 0) return;
+    if (isScanningRef.current !== false || scanQueueRef.current.length === 0) {
+      return;
+    }
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       setTimeout(processNextScan, 500);
       return;
@@ -167,6 +178,14 @@ function App() {
       isScanningRef.current = next.index;
       currentMoveQualityRef.current = null;
       socketRef.current.send(JSON.stringify({ type: 'scan_position', fen: next.fen, index: next.index }));
+
+      // Watchdog: Reset scanning state if it takes too long (10s)
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = setTimeout(() => {
+        console.log(`[App] Scan watchdog triggered for move ${next.index}. Resetting...`);
+        isScanningRef.current = false;
+        processNextScan();
+      }, 10000);
     }
   }, []);
 
@@ -223,55 +242,152 @@ function App() {
     }
   }, [allFens, processNextScan]);
 
+  const [wsStatus, setWsStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+
   // WebSocket for Analysis
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use the same host/port as the current page for maximum compatibility
-    const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    socketRef.current = socket;
-    socket.onopen = () => {
-      console.log('[App] WebSocket Connected');
-      socket.send(JSON.stringify({ type: 'uci' }));
-      if (scanQueueRef.current.length === 0) {
-        startMainAnalysis();
-      }
-    };
-    socket.onclose = () => {
-      console.log('WebSocket Disconnected');
-    };
-    socket.onerror = (err) => {
-      console.error('WebSocket Error:', err);
-    };
-    socket.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === 'error') {
-        alert(message.data);
-        return;
-      }
-      if (message.type === 'scan_complete') {
-        const q = currentMoveQualityRef.current;
-        const idx = isScanningRef.current;
-        if (q && typeof idx === 'number' && idx > 0) {
-          const playerMoved = (idx % 2 !== 0) ? 'w' : 'b';
-          const isUser = userColorRef.current === playerMoved;
-          const s = isUser ? statsRef.current : opponentStatsRef.current;
-          if (q === 'brilliant') s.brilliant++;
-          else if (q === 'great') s.great++;
-          else if (q === 'best') s.best++;
-          else if (q === 'mistake') s.mistake++;
-          else if (q === 'miss') s.miss++;
-          else if (q === 'blunder') s.blunder++;
-        }
-        isScanningRef.current = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: any = null;
+    let isMounted = true;
+
+    const connect = () => {
+      if (!isMounted) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      console.log(`[App] Connecting to WebSocket via proxy at ${protocol}//${host}/ws`);
+      
+      socket = new WebSocket(`${protocol}//${host}/ws`);
+      socketRef.current = socket;
+      setWsStatus('connecting');
+
+      socket.onopen = () => {
+        if (!isMounted) return;
+        console.log('[App] WebSocket Connected');
+        setWsStatus('open');
+        socket?.send(JSON.stringify({ type: 'uci' }));
         if (scanQueueRef.current.length === 0) {
           startMainAnalysis();
         } else {
-          setTimeout(processNextScan, 10);
+          processNextScan();
         }
-        return;
-      }
-      if (message.type === 'info') {
-        if (message.engine === 'main') {
+      };
+
+      socket.onclose = () => {
+        if (!isMounted) return;
+        console.log('[App] WebSocket Disconnected. Retrying in 3s...');
+        setWsStatus('closed');
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      socket.onerror = (err) => {
+        console.error('[App] WebSocket Error:', err);
+      };
+
+    socket.onmessage = (event) => {
+        if (!isMounted) return;
+        const message = JSON.parse(event.data);
+        console.log(`[App] WS Message: type=${message.type}, engine=${message.engine}`);
+        if (message.type === 'error') {
+          alert(message.data);
+          return;
+        }
+
+        // Prioritize scan engine messages for graph responsiveness
+        if (message.engine === 'scan' || message.type === 'scan_complete') {
+          if (message.type === 'scan_complete') {
+            console.log(`[App] Scan complete for move ${isScanningRef.current}`);
+            if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+            const q = currentMoveQualityRef.current;
+            const idx = isScanningRef.current;
+            if (q && typeof idx === 'number' && idx > 0) {
+              const playerMoved = (idx % 2 !== 0) ? 'w' : 'b';
+              const isUser = userColorRef.current === playerMoved;
+              const s = isUser ? statsRef.current : opponentStatsRef.current;
+              if (q === 'brilliant') s.brilliant++;
+              else if (q === 'great') s.great++;
+              else if (q === 'best') s.best++;
+              else if (q === 'mistake') s.mistake++;
+              else if (q === 'miss') s.miss++;
+              else if (q === 'blunder') s.blunder++;
+            }
+            isScanningRef.current = false;
+            if (scanQueueRef.current.length > 0) {
+              console.log(`[App] Queue has ${scanQueueRef.current.length} moves left. Continuing...`);
+              setTimeout(processNextScan, 0); // Immediate next scan
+            } else {
+              console.log('[App] Scan queue empty. Starting main analysis.');
+              startMainAnalysis();
+            }
+            return;
+          }
+
+          if (message.type === 'info') {
+            const line = message.data;
+            const cpMatch = line.match(/score\s+cp\s+(-?\d+)/);
+            const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
+            if (cpMatch || mateMatch) {
+              const lastIdx = isScanningRef.current;
+              if (typeof lastIdx === 'number' && allFensRef.current[lastIdx]) {
+                const sideToMove = allFensRef.current[lastIdx].includes(' w ') ? 1 : -1;
+                let score = cpMatch ? (sideToMove * parseInt(cpMatch[1]) / 100) : (sideToMove * (parseInt(mateMatch![1]) > 0 ? 10 : -10));
+                score = Math.max(-10, Math.min(10, score));
+                const newData = [...graphDataRef.current];
+                while (newData.length <= lastIdx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
+                let quality: any = 'normal';
+                if (lastIdx > 0 && newData[lastIdx - 1]) {
+                  const prevEval = newData[lastIdx - 1].eval;
+                  const delta = (lastIdx % 2 !== 0) ? (score - prevEval) : (prevEval - score);
+                  if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
+                  else if (delta >= 1.0) quality = 'great';
+                  else if (delta >= -0.1) quality = 'best';
+                  else if (delta <= -3.0) quality = 'blunder';
+                  else if (delta <= -1.5) quality = 'miss';
+                  else if (delta <= -0.8) quality = 'mistake';
+                }
+                newData[lastIdx] = { move: lastIdx, eval: score, quality };
+                graphDataRef.current = newData;
+                
+                // Sync main line data if this move is part of it
+                if (branchingPoint === null || lastIdx <= branchingPoint) {
+                  const mainData = [...originalGraphDataRef.current];
+                  if (mainData[lastIdx]) {
+                    mainData[lastIdx] = { ...mainData[lastIdx], eval: score, quality };
+                    originalGraphDataRef.current = mainData;
+                  }
+                }
+
+                currentMoveQualityRef.current = quality;
+                setGraphData([...newData]);
+
+                if (currentGameIdRef.current) {
+                  const localKey = `analysis_${currentGameIdRef.current}`;
+                  const evalData = newData.map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
+                  localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
+
+                  // Periodically save to backend (every 5 moves or completion)
+                  if (lastIdx % 5 === 0 || scanQueueRef.current.length === 0) {
+                     fetch('/api/save-analysis', {
+                       method: 'POST',
+                       headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({
+                         gameId: currentGameIdRef.current,
+                         evaluations: evalData,
+                         pgn: (window as any).lastPgn,
+                         white: players.white,
+                         black: players.black
+                       })
+                     }).catch(err => console.error('Failed to save analysis to server', err));
+                  }
+                }
+
+              }
+            }
+          }
+          return;
+        }
+
+        // Secondary priority: Main engine analysis (Next Move)
+        if (message.type === 'info' && message.engine === 'main') {
           const line = message.data;
           const pvMatch = line.match(/multipv\s+(\d+)/);
           if (pvMatch) {
@@ -295,44 +411,17 @@ function App() {
               if (rank === 1) evalRef.current = scoreStr;
             }
           }
-        } else if (message.engine === 'scan') {
-          const line = message.data;
-          const cpMatch = line.match(/score\s+cp\s+(-?\d+)/);
-          const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
-          if (cpMatch || mateMatch) {
-            const lastIdx = isScanningRef.current;
-            if (typeof lastIdx === 'number' && allFensRef.current[lastIdx]) {
-              // Always store score from White's perspective for the graph
-              const sideToMove = allFensRef.current[lastIdx].includes(' w ') ? 1 : -1;
-              let score = cpMatch ? (sideToMove * parseInt(cpMatch[1]) / 100) : (sideToMove * (parseInt(mateMatch![1]) > 0 ? 10 : -10));
-              
-              score = Math.max(-10, Math.min(10, score));
-              const newData = [...graphDataRef.current];
-              while (newData.length <= lastIdx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
-              let quality: any = 'normal';
-              if (lastIdx > 0 && newData[lastIdx - 1]) {
-                const prevEval = newData[lastIdx - 1].eval;
-                const delta = (lastIdx % 2 !== 0) ? (score - prevEval) : (prevEval - score);
-                if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
-                else if (delta >= 1.0) quality = 'great';
-                else if (delta >= -0.1) quality = 'best';
-                else if (delta <= -3.0) quality = 'blunder';
-                else if (delta <= -1.5) quality = 'miss';
-                else if (delta <= -0.8) quality = 'mistake';
-              }
-              newData[lastIdx] = { move: lastIdx, eval: score, quality };
-              graphDataRef.current = newData;
-              currentMoveQualityRef.current = quality;
-              
-              // Force immediate state update for the graph to ensure real-time rendering
-              setGraphData([...newData]);
-              console.log(`[App] Received scan result for move ${lastIdx}: ${score}`);
-            }
-          }
         }
-      }
+      };
     };
-    return () => socket.close();
+
+    connect();
+
+    return () => {
+      isMounted = false;
+      if (socket) socket.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
   }, [processNextScan, startMainAnalysis]);
 
   useEffect(() => {
@@ -341,23 +430,46 @@ function App() {
     }
   }, [fen, startMainAnalysis]);
 
-  const goToMove = useCallback((index: number, restoreMainLine = false) => {
-    if (restoreMainLine && originalGameRef.current) {
+  const goToMove = useCallback((index: number, fromGraph = false) => {
+    // If clicking from graph on/before the branch origin, restore main line
+    if (fromGraph && branchingPoint !== null && index <= branchingPoint && originalGameRef.current) {
       const main = originalGameRef.current;
       setAllFens(main.allFens);
+      allFensRef.current = main.allFens;
       setMoveHistory(main.moveHistory);
       setLastMoveSquares(main.lastMoveSquares);
-      setGraphData([...graphDataRef.current]);
+      setBranchingPoint(null);
+      // Restore graph data to full main line
+      const restoredGraph = [...originalGraphDataRef.current];
+      graphDataRef.current = restoredGraph;
+      setGraphData(restoredGraph);
+      
       const safeIndex = Math.max(0, Math.min(index, main.allFens.length - 1));
       setCurrentIndex(safeIndex);
       setFen(main.allFens[safeIndex]);
+
+      // Restart analysis for missing main line positions
+      if (!isPreAnalyzed) {
+        const missing = main.allFens.map((f: string, i: number) => ({ fen: f, index: i }))
+          .filter((t: any) => t.index !== 0 && (!restoredGraph[t.index] || (restoredGraph[t.index].eval === 0 && restoredGraph[t.index].quality === 'normal')));
+        
+        if (missing.length > 0) {
+          const currentQueueIndices = new Set(scanQueueRef.current.map(q => q.index));
+          const toAdd = missing.filter(m => !currentQueueIndices.has(m.index));
+          if (toAdd.length > 0) {
+            scanQueueRef.current = [...scanQueueRef.current, ...toAdd].sort((a, b) => a.index - b.index);
+            processNextScan();
+          }
+        }
+      }
       return;
     }
+
     if (index >= 0 && index < allFens.length) {
       setCurrentIndex(index);
       setFen(allFens[index]);
     }
-  }, [allFens]);
+  }, [allFens, branchingPoint, isPreAnalyzed, processNextScan]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -395,7 +507,8 @@ function App() {
       const fens: string[] = [];
       const moveSqs: any[] = [null];
       const replayGame = new Chess();
-      if (tempGame.header().FEN) replayGame.load(tempGame.header().FEN);
+      const fenHeader = tempGame.header().FEN;
+      if (fenHeader) replayGame.load(fenHeader);
       fens.push(replayGame.fen());
       for (const move of history) {
         replayGame.move(move.san);
@@ -416,22 +529,53 @@ function App() {
       setLastMoveSquares(moveSqs);
       setMoveHistory(history.map(m => m.san));
       setPgnResult(tempGame.header().Result || null);
+      setBranchingPoint(null);
       originalGameRef.current = { allFens: fens, moveHistory: history.map(m => m.san), lastMoveSquares: moveSqs };
       
       setCurrentIndex(0);
       setFen(fens[0]);
       setPgn(pgnString);
+      (window as any).lastPgn = pgnString;
 
       const gameUrl = tempGame.header().Link || '';
-      const gameId = gameUrl.split('/').pop();
+      const gameId = gameUrl.split('/').pop() || `temp_${Date.now()}`;
+      currentGameIdRef.current = gameId;
 
-      graphDataRef.current = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' }));
+      const initialGraph = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' as any }));
+      graphDataRef.current = initialGraph;
+      originalGraphDataRef.current = [...initialGraph];
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
 
-      if (gameId) {
-        fetch(`/api/analysis/${gameId}`)
+      // Load temporary results from localStorage if they exist
+      const localKey = `analysis_${gameId}`;
+      const saved = localStorage.getItem(localKey);
+      const savedIndices = new Set<number>();
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.evaluations) {
+            const loadedData = [...graphDataRef.current];
+            parsed.evaluations.forEach((e: any) => {
+              if (loadedData[e.move]) {
+                loadedData[e.move] = { ...loadedData[e.move], eval: e.eval, quality: e.quality || 'normal' };
+                savedIndices.add(e.move);
+              }
+            });
+            graphDataRef.current = loadedData;
+            originalGraphDataRef.current = [...loadedData];
+            setGraphData([...loadedData]);
+          }
+        } catch (e) { console.error('Failed to load local analysis', e); }
+      }
+
+      if (gameUrl) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        fetch(`/api/analysis/${gameId}`, { signal: controller.signal })
           .then(res => {
+            clearTimeout(timeoutId);
             if (res.ok) return res.json();
             throw new Error('No pre-analysis found');
           })
@@ -441,14 +585,14 @@ function App() {
             const preEvalData = data.evaluations.map((e: any) => ({
               move: e.move,
               eval: typeof e.eval === 'string' ? (e.eval.startsWith('M') ? (parseFloat(e.eval.substring(1)) > 0 ? 10 : -10) : parseFloat(e.eval)) : e.eval,
-              quality: 'normal' 
+              quality: 'normal' as any
             }));
 
             for (let i = 1; i < preEvalData.length; i++) {
               const score = preEvalData[i].eval;
               const prevEval = preEvalData[i-1].eval;
               const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
-              let quality = 'normal';
+              let quality: any = 'normal';
               if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
               else if (delta >= 1.0) quality = 'great';
               else if (delta >= -0.1) quality = 'best';
@@ -469,19 +613,32 @@ function App() {
             }
 
             graphDataRef.current = preEvalData;
+            originalGraphDataRef.current = [...preEvalData];
+            setGraphData([...preEvalData]);
+            // Clear local storage since backend result is now definitive
+            localStorage.removeItem(localKey);
             isScanningRef.current = false;
             scanQueueRef.current = [];
             startMainAnalysis();
           })
-          .catch(() => {
+          .catch((err) => {
+            clearTimeout(timeoutId);
+            console.log('[App] Pre-analysis fetch failed or timed out:', err.message);
             setIsPreAnalyzed(false);
-            scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
+            // Resume from local storage: only queue moves that aren't already analyzed
+            const missing = fens.map((f, i) => ({ fen: f, index: i }))
+                                .filter(t => !savedIndices.has(t.index) && t.index !== 0);
+            
+            console.log(`[App] Queuing ${missing.length} moves for scan`);
+            scanQueueRef.current = missing;
             isScanningRef.current = false;
             processNextScan();
           });
       } else {
         setIsPreAnalyzed(false);
-        scanQueueRef.current = fens.map((f, i) => ({ fen: f, index: i }));
+        const missing = fens.map((f, i) => ({ fen: f, index: i }))
+                            .filter(t => !savedIndices.has(t.index) && t.index !== 0);
+        scanQueueRef.current = missing;
         isScanningRef.current = false;
         processNextScan();
       }
@@ -559,6 +716,25 @@ function App() {
   };
   const qualityInfo = getQualityLabel(currentMoveQuality);
 
+  const materialAdvantage = useMemo(() => {
+    const values: Record<string, number> = {
+      p: 1, n: 3, b: 3, r: 5, q: 9,
+      P: 1, N: 3, B: 3, R: 5, Q: 9
+    };
+    let white = 0;
+    let black = 0;
+    const board = fen.split(' ')[0];
+    for (const char of board) {
+      if (values[char]) {
+        if (char === char.toUpperCase()) white += values[char];
+        else black += values[char];
+      }
+    }
+    const diff = white - black;
+    if (diff === 0) return 'Equal';
+    return diff > 0 ? `+${diff}` : `${diff}`;
+  }, [fen]);
+
   const filteredCandidates = useMemo(() => {
     if (candidates.length === 0) return [];
     return candidates.filter((c, i) => {
@@ -599,37 +775,32 @@ function App() {
             <div className="board-wrapper" onContextMenu={(e) => e.preventDefault()}>
               <Chessboard position={fen} boardOrientation={boardOrientation}
                 onPieceDrop={(s, t) => {
-                  // Only allow moves at the latest position to avoid invalid move errors
-                  if (currentIndex !== allFens.length - 1) {
-                    return false;
-                  }
-
                   const game = new Chess(fen);
                   try {
                     const move = game.move({ from: s, to: t, promotion: 'q' });
                     if (move) {
                       const newFen = game.fen();
                       
-                      setAllFens(prev => {
-                        const next = [...prev, newFen];
-                        allFensRef.current = next;
-                        return next;
-                      });
+                      const newAllFens = [...allFens.slice(0, currentIndex + 1), newFen];
+                      const newMoveHistory = [...moveHistory.slice(0, currentIndex), move.san];
+                      const newLastMoveSquares = [...lastMoveSquares.slice(0, currentIndex + 1), { from: s, to: t }];
 
-                      setLastMoveSquares(prev => [...prev, { from: s, to: t }]);
-                      setMoveHistory(prev => [...prev, move.san]);
-                      setCurrentIndex(prev => prev + 1);
-                      setFen(newFen);
-
-                      const newIndex = allFens.length; // Length before state update
-                      const newPoint = { move: newIndex, eval: graphDataRef.current[newIndex - 1]?.eval || 0, quality: 'normal' };
+                      setAllFens(newAllFens);
+                      allFensRef.current = newAllFens;
+                      setMoveHistory(newMoveHistory);
+                      setLastMoveSquares(newLastMoveSquares);
                       
-                      const updatedGraph = [...graphDataRef.current];
-                      if (updatedGraph.length <= newIndex) {
-                        updatedGraph.push(newPoint);
-                        graphDataRef.current = updatedGraph;
-                        setGraphData([...updatedGraph]);
-                      }
+                      const newIndex = currentIndex + 1;
+                      setCurrentIndex(newIndex);
+                      setFen(newFen);
+                      setPgnResult('*');
+                      if (branchingPoint === null) setBranchingPoint(currentIndex);
+
+                      // Update graph data for the new branch
+                      const newPoint: GraphPoint = { move: newIndex, eval: graphDataRef.current[newIndex - 1]?.eval || 0, quality: 'normal' };
+                      const updatedGraph: GraphPoint[] = [...graphDataRef.current.slice(0, newIndex), newPoint];
+                      graphDataRef.current = updatedGraph;
+                      setGraphData(updatedGraph);
                       
                       scanQueueRef.current.push({ fen: newFen, index: newIndex });
                       processNextScan();
@@ -672,23 +843,26 @@ function App() {
             <button onClick={() => goToMove(allFens.length - 1)} className="nav-btn">&gt;|</button>
           </div>
           <div className="move-history">
-            <h3>History</h3>
+            <h3>History {branchingPoint !== null && <span className="branch-badge">(Research Mode)</span>}</h3>
             <div className="history-list">
-              <span className={`move-item ${currentIndex === 0 ? 'active-move' : ''}`} onClick={() => goToMove(0)}>Start</span>
-              {moveHistory.map((move, index) => (
-                <span key={index} className={`move-item ${index + 1 === currentIndex ? 'active-move' : ''}`} onClick={() => goToMove(index + 1)}>
-                  {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''}{move}{' '}
-                </span>
-              ))}
+              <span className={`move-item ${currentIndex === 0 ? 'active-move' : ''} ${branchingPoint === 0 ? 'branch-origin' : ''}`} onClick={() => goToMove(0)}>Start</span>
+              {moveHistory.map((move, index) => {
+                const isOrigin = (index + 1 === branchingPoint);
+                const isStart = (branchingPoint !== null && index === branchingPoint);
+                return (
+                  <span key={index} 
+                    className={`move-item ${index + 1 === currentIndex ? 'active-move' : ''} ${isOrigin ? 'branch-origin' : ''} ${isStart ? 'branch-start' : ''}`} 
+                    onClick={() => goToMove(index + 1)}
+                    title={isStart ? 'First move of research branch' : ''}
+                  >
+                    {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ''}{move}{' '}
+                  </span>
+                );
+              })}
             </div>
           </div>
           <div className="eval-bar-container">
             <div className="eval-info">
-              {currentStatus ? (
-                <p className="game-status-text">Result: <strong>{currentStatus}</strong></p>
-              ) : (
-                <p>Evaluation: <strong>{evaluation || 'Calculating...'}</strong> <span className="engine-timer">({elapsedTime})</span></p>
-              )}
               <p>Move: <strong>{currentIndex} / {allFens.length - 1}</strong></p>
             </div>
             <button onClick={() => {
@@ -699,6 +873,7 @@ function App() {
               setCurrentIndex(0);
               setFen(startFen);
               setPgnResult(null);
+              setBranchingPoint(null);
               setIsPreAnalyzed(false);
               graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
               statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
@@ -709,16 +884,37 @@ function App() {
           </div>
         </div>
         <div className="sidebar">
+          <div className="live-stats-panel">
+            <div className="stat-main">
+              <span className="stat-label">Evaluation</span>
+              <div className="stat-value highlight">
+                {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
+              </div>
+            </div>
+            <div className="stat-sub">
+              <span className="stat-label">Material</span>
+              <span className="stat-value">{materialAdvantage}</span>
+            </div>
+            <div className="stat-timer">
+              <span className="engine-timer">Time: {elapsedTime}</span>
+              <div className={`ws-status ${wsStatus}`}>
+                {wsStatus === 'open' ? '● Connected' : wsStatus === 'connecting' ? '○ Connecting...' : '○ Disconnected (Retrying)'}
+              </div>
+            </div>
+            {currentStatus && (
+              <div className="status-badge-inline">
+                {currentStatus}
+              </div>
+            )}
+          </div>
+
           <div className="graph-container">
             <div className="graph-header">
               <h3>Evaluation Graph</h3>
               {isPreAnalyzed && <span className="pre-analyzed-badge">Deep Analysis (Depth {isPreAnalyzed})</span>}
-              <div className="current-eval-badge">
-                {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
-              </div>
             </div>
             <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} />
+              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} branchingPoint={branchingPoint} />
             </div>
             <div className="quality-indicator-wrapper">
               {qualityInfo && (

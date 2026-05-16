@@ -1,20 +1,23 @@
-# GaffBuster ♟️ (v2.0)
+# GaffBuster ♟️ (v2.1)
 
-GaffBuster is a powerful, web-based chess analysis application powered by the **Stockfish** engine. version 2.0 introduces a background analysis bot, high-speed real-time graph building, and enhanced security for external hosting.
+GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. Version 2.1 introduces a parallel analysis architecture, enhanced research capabilities, and seamless connectivity.
 
 ## Key Features
 
-- **Automated Background Analysis**: A dedicated bot periodically fetches your Chess.com games and analyzes them at high depth (`analysisDepth`) when the frontend is idle.
-- **High-Speed Graph Building**: When using the frontend, 16 threads (2x configured threads) are utilized to build the evaluation graph instantly.
-- **Resumable Progress**: Analysis is saved move-by-move. If interrupted, the bot resumes from the exact position where it left off.
-- **Local Persistence**: Original PGNs and detailed analysis results are stored locally, allowing instant access to previously analyzed games.
-- **Smart Resource Management**:
-    - **Frontend Priority**: Background bot fully stops its engines when the browser is open to give 100% resources to your current task.
-    - **Native Priority Control**: Uses OS-level process prioritization (`nice` equivalent) to ensure the Evaluation Graph builder and Main engine share CPU cores without lag.
-- **Enhanced Security**:
-    - **Secure Passwords**: Mandatory `bcryptjs` hashing for user credentials (portable and dependency-free).
-    - **Rate Limiting**: Protection against brute-force attacks on the API.
-    - **Robust Handshaking**: Secure WebSocket communication for real-time analysis.
+- **Parallel Background Analysis**: A redesigned analysis bot uses a **Worker Pool** to analyze multiple positions concurrently, significantly increasing throughput and reaching Depth 30 faster.
+- **Deep Analysis (Depth 30+)**: Optimized for high-memory environments. Supports massive Hash sizes (e.g., 8GB - 32GB) to maintain stable and accurate evaluations at extreme depths.
+- **Enhanced Research Mode**:
+    - **Interactive Branching**: Freely explore alternate lines at any point in the game history.
+    - **Visual Branching Indicator**: Clear visualization of where your research line diverged from the original PGN, including vertical lines on the evaluation graph.
+    - **Intelligent Navigation**: Click the graph to jump between your research and the original main line instantly.
+- **High-Performance Frontend**:
+    - **Full Thread Utilization**: Automatically scales to use all available CPU cores for both real-time analysis and graph generation.
+    - **Prioritized Rendering**: Evaluation graph updates are prioritized over move suggestions to ensure a smooth, lag-free UI experience.
+    - **Resumable Progress**: Frontend analysis is automatically saved to `localStorage` and periodically synced to the server. Analysis resumes from the last completed move after a reload.
+- **Seamless Connectivity**:
+    - **Unified Vite Proxy**: Routes all traffic through a single origin, eliminating browser security blocks and the need to manually accept self-signed certificates for the backend.
+    - **Auto-Reconnect**: Robust WebSocket management with automatic reconnection and a watchdog timer to recover from analysis stalls.
+- **Material Advantage Display**: Real-time calculation and display of the material balance (+/- points) alongside Stockfish evaluations.
 
 ## Setup & Installation
 
@@ -28,23 +31,21 @@ Run the setup command to generate configuration files and install dependencies:
 make setup
 ```
 
-Edit `backend/config.json` to customize your Chess.com username and CPU resource allocation.
+Edit `backend/config.json` to customize your Chess.com username and memory/CPU allocation. For Depth 30 analysis, **8192MB (8GB) Hash** is highly recommended.
 
 ### 3. User Management
-In v2.0, both usernames and passwords must be secured. Use the provided tool:
+Secure both usernames and passwords using the provided tool:
 
 #### Interactive Mode
 ```bash
 make add-user
 ```
-Follow the prompts to enter your **username** and **password**. Input is securely masked in the terminal.
+Follow the prompts to enter your **username** and **password**.
 
-#### Command Line Mode (Automation)
+#### Command Line Mode
 ```bash
 make add-user user=your_username pass=your_password
 ```
-
-The tool hashes credentials (SHA-256 for username, bcrypt for password) and saves them to `backend/users.json`.
 
 ### 4. Running the Application
 ```bash
@@ -52,16 +53,15 @@ make build
 make up
 ```
 
-Access via `https://localhost:5173`. Use the credentials from step 3.
+Access via `https://localhost:5173`.
 
 ## Maintenance Commands
 
-- **Check Progress**: `make logs` (displays real-time NPS and analysis progress).
+- **Check Progress**: `make logs` (displays real-time NPS, Depth, and worker pool progress).
 - **Restart**: `make restart` (applies configuration changes).
-- **Clean Start**: `make down && make build && make up` (clears all temporary processes and rebuilds).
+- **Clean Start**: `make clean && make setup && make build && make up`.
 
 ## Architecture Note
-GaffBuster uses two independent Stockfish engines in the frontend:
-1. **Scan Engine (Priority: High)**: Builds the complete Evaluation Graph at depth 18-22.
-2. **Main Engine (Priority: Low)**: Calculates Best/2nd/3rd moves for your current position.
-Both engines share the doubling of threads to ensure the graph is finished as fast as possible.
+GaffBuster v2.1 balances resources dynamically:
+1. **Analysis Bot**: Operates at `nice 10` priority and pauses instantly when a user connects to free up memory.
+2. **Interactive Engines**: Both Main and Scan engines utilize all available threads, managed by OS-level scheduling (nice 0 for Main, nice 10 for Scan) to ensure perfect responsiveness while maximizing throughput.

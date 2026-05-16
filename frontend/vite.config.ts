@@ -11,6 +11,19 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    https: true
+    https: true,
+    proxy: {
+      '/api': {
+        target: 'https://backend:5000',
+        secure: false,
+        changeOrigin: true
+      },
+      '/ws': {
+        target: 'https://backend:5000',
+        secure: false,
+        ws: true,
+        changeOrigin: true
+      }
+    }
   }
 })

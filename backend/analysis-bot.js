@@ -12,7 +12,7 @@ const PAUSE_FILE = path.join(RESULTS_DIR, 'bot_pause.signal');
 
 const totalCores = (() => {
     try {
-        return parseInt(require('child_process').execSync('nproc').toString().trim()) || 1;
+        return os.cpus().length || 1;
     } catch (e) {
         return 1;
     }
@@ -46,67 +46,95 @@ function log(msg) {
     console.log(`[${ts}] ${msg}`);
 }
 
-class EngineManager {
-    constructor(config) {
-        this.config = config;
+class Engine {
+    constructor(id, threads, hash) {
+        this.id = id;
+        this.threads = threads;
+        this.hash = hash;
         this.stockfish = null;
-        this.ready = false;
+        this.busy = false;
+        this.currentEval = 0;
         this.resolver = null;
-        this.depth = 24;
+        this.depth = 0;
     }
 
-    start() {
+    async start() {
         return new Promise((resolve) => {
             this.stockfish = spawn('stockfish');
             
-            // Set priority using native Node.js API (10 is equivalent to nice -n 10)
+            // Background bot priority (10 = lower priority/nice 10)
             try {
                 os.setPriority(this.stockfish.pid, 10);
             } catch (e) {}
 
+            let buffer = '';
             this.stockfish.stdout.on('data', (data) => {
-                const lines = data.toString().split('\n');
+                buffer += data.toString();
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
                 for (const line of lines) {
-                    if (this.resolver && (line.startsWith('info depth ' + this.depth) || (line.startsWith('info depth') && line.includes('score')))) {
-                        const cpMatch = line.match(/score cp (-?\d+)/);
-                        const mateMatch = line.match(/score mate (-?\d+)/);
-                        if (cpMatch) {
-                            this.currentEval = parseInt(cpMatch[1]) / 100;
-                        } else if (mateMatch) {
-                            this.currentEval = `M${mateMatch[1]}`;
+                    const l = line.trim();
+                    if (this.resolver) {
+                        if (l.startsWith('info depth') && l.includes('score')) {
+                            const dMatch = l.match(/depth (\d+)/);
+                            if (dMatch) this.lastDepth = parseInt(dMatch[1]);
+
+                            const cpMatch = l.match(/score cp (-?\d+)/);
+                            const mateMatch = l.match(/score mate (-?\d+)/);
+                            if (cpMatch) this.currentEval = parseInt(cpMatch[1]) / 100;
+                            else if (mateMatch) this.currentEval = `M${mateMatch[1]}`;
+                            
+                            const npsMatch = l.match(/nps (\d+)/);
+                            if (npsMatch && parseInt(npsMatch[1]) > 0) this.lastNps = parseInt(npsMatch[1]);
+                        }
+                        if (l.startsWith('bestmove')) {
+                            const res = this.resolver;
+                            this.resolver = null;
+                            this.busy = false;
+                            res(this.currentEval);
                         }
                     }
-                    if (line.startsWith('bestmove') && this.resolver) {
-                        const res = this.resolver;
-                        this.resolver = null;
-                        res(this.currentEval);
-                    }
-                    if (line.includes('readyok')) {
-                        this.ready = true;
-                        resolve();
-                    }
+                    if (l.includes('readyok')) resolve();
                 }
             });
 
             this.stockfish.stdin.write('uci\n');
-            const threads = this.config.analysisThreads || this.config.threads || 1;
-            this.stockfish.stdin.write(`setoption name Threads value ${Math.min(threads, totalCores)}\n`);
-            this.stockfish.stdin.write(`setoption name Hash value ${this.config.hash || 128}\n`);
+            this.stockfish.stdin.write(`setoption name Threads value ${this.threads}\n`);
+            this.stockfish.stdin.write(`setoption name Hash value ${this.hash}\n`);
+            this.stockfish.stdin.write('setoption name UCI_AnalyseMode value true\n');
             this.stockfish.stdin.write('isready\n');
         });
     }
 
     async getEvaluation(fen, depth) {
+        if (this.busy) throw new Error('Engine busy');
+        this.busy = true;
         this.depth = depth;
         this.currentEval = 0;
+        this.lastNps = 0;
+
         return new Promise((resolve) => {
             let timer = setTimeout(() => {
-                log(`[Bot] Evaluation timeout for FEN: ${fen}`);
+                log(`[Worker ${this.id}] Timeout for FEN: ${fen}`);
                 this.resolver = null;
+                this.busy = false;
                 resolve(0);
-            }, 60000);
+            }, 300000); // 5 min timeout per move
+
+            const checkPause = setInterval(() => {
+                if (isPaused()) {
+                    log(`[Worker ${this.id}] Pause detected during evaluation. Stopping...`);
+                    clearInterval(checkPause);
+                    this.stop();
+                    this.resolver = null;
+                    this.busy = false;
+                    clearTimeout(timer);
+                    resolve(null); // Return null to indicate pause
+                }
+            }, 1000);
 
             this.resolver = (val) => {
+                clearInterval(checkPause);
                 clearTimeout(timer);
                 resolve(val);
             };
@@ -124,11 +152,72 @@ class EngineManager {
             } catch (e) {}
             this.stockfish.kill();
             this.stockfish = null;
+            this.busy = false;
         }
     }
 }
 
-let currentEngine = null;
+class WorkerPool {
+    constructor(config) {
+        this.config = config;
+        this.workers = [];
+        this.poolSize = 2; // Analyze 2 positions in parallel
+    }
+
+    async init() {
+        const totalThreads = this.config.analysisThreads || this.config.threads || totalCores || 1;
+        const totalHash = this.config.hash || 512;
+        
+        const threadsPerWorker = Math.max(1, Math.floor(totalThreads / this.poolSize));
+        const hashPerWorker = Math.max(32, Math.floor(totalHash / this.poolSize));
+
+        log(`[Pool] Initializing ${this.poolSize} workers (Each: ${threadsPerWorker}T/${hashPerWorker}MB)`);
+        
+        for (let i = 0; i < this.poolSize; i++) {
+            const worker = new Engine(i, threadsPerWorker, hashPerWorker);
+            await worker.start();
+            this.workers.push(worker);
+        }
+    }
+
+    async analyze(tasks, onProgress) {
+        let completed = 0;
+        const results = [];
+        const queue = [...tasks];
+        
+        const runWorker = async (worker) => {
+            while (queue.length > 0) {
+                if (isPaused()) {
+                    worker.stop();
+                    while (isPaused()) await new Promise(r => setTimeout(r, 2000));
+                    await worker.start();
+                    continue;
+                }
+                const task = queue.shift();
+                log(`  [Worker ${worker.id}] Starting analysis: Move ${task.moveIndex} (Depth ${task.depth})`);
+                const evalValue = await worker.getEvaluation(task.fen, task.depth);
+                if (evalValue === null) {
+                    // Put task back in queue if it was paused
+                    queue.unshift(task);
+                    continue;
+                }
+                const resultObj = { move: task.moveIndex, fen: task.fen, eval: evalValue };
+                results.push(resultObj);
+                completed++;
+                onProgress(completed, tasks.length, worker.lastNps, results);
+            }
+        };
+
+        await Promise.all(this.workers.map(w => runWorker(w)));
+        return results.sort((a, b) => a.move - b.move);
+    }
+
+    stop() {
+        this.workers.forEach(w => w.stop());
+        this.workers = [];
+    }
+}
+
 let isRunning = false;
 
 async function analyzeGame(game, config) {
@@ -141,7 +230,7 @@ async function analyzeGame(game, config) {
     try {
         chess.loadPgn(game.pgn);
     } catch (e) {
-        log(`[Bot] Failed to load PGN for game ${game.url}: ${e.message}`);
+        log(`[Bot] Failed to load PGN: ${e.message}`);
         return;
     }
     
@@ -158,57 +247,47 @@ async function analyzeGame(game, config) {
         try {
             const existing = JSON.parse(fs.readFileSync(filePath));
             evaluations = existing.evaluations || [];
-            log(`[Bot] Found partial analysis for ${game.url}. Resuming from pos ${evaluations.length}/${fens.length - 1}`);
-        } catch (e) {
-            evaluations = [];
-        }
+        } catch (e) {}
     }
 
     if (evaluations.length >= fens.length) {
-        log(`[Bot] Game ${game.url} already analyzed.`);
+        log(`[Bot] Already analyzed: ${game.url}`);
         return;
     }
 
-    log(`[Bot] Starting analysis: ${game.url} at depth ${depth}`);
+    log(`[Bot] Starting parallel analysis: ${game.url} (Depth ${depth}, Positions ${fens.length - evaluations.length})`);
     
+    const pool = new WorkerPool(config);
+    await pool.init();
+
+    const tasks = [];
     for (let i = evaluations.length; i < fens.length; i++) {
-        if (isPaused()) {
-            log(`[Bot] PAUSED - Frontend active. Stopping engine...`);
-            if (currentEngine) {
-                currentEngine.stop();
-                currentEngine = null;
-            }
-            while (isPaused()) {
-                await new Promise(r => setTimeout(r, 2000));
-            }
-            log(`[Bot] RESUMED - Starting engine to continue at position ${i}`);
-        }
+        tasks.push({ moveIndex: i, fen: fens[i], depth });
+    }
 
-        if (!currentEngine) {
-            currentEngine = new EngineManager(config);
-            await currentEngine.start();
-        }
-
-        if (i % 10 === 0 || i === fens.length - 1) {
-            log(`  [Bot] Progress: ${i}/${fens.length - 1}`);
-        }
+    const newResults = await pool.analyze(tasks, (done, total, nps, currentBatch) => {
+        const latestDepth = pool.workers.map(w => w.lastDepth).filter(d => d > 0);
+        const avgDepth = latestDepth.length > 0 ? (latestDepth.reduce((a, b) => a + b, 0) / latestDepth.length).toFixed(1) : 'N/A';
+        log(`  [Progress] ${done}/${total} positions completed. (Avg Depth: ${avgDepth}/${depth}, Total NPS: ${(nps * pool.poolSize / 1000000).toFixed(1)}M)`);
         
-        const eval = await currentEngine.getEvaluation(fens[i], depth);
-        evaluations.push({ move: i, fen: fens[i], eval });
-
+        // Periodic save (save every position now)
+        const combinedEvals = [...evaluations, ...currentBatch].sort((a, b) => a.move - b.move);
         const result = {
             url: game.url, pgn: game.pgn, white: game.white.username, black: game.black.username,
-            endTime: game.end_time, analysisDepth: depth, evaluations
+            endTime: game.end_time, analysisDepth: depth, evaluations: combinedEvals
         };
         fs.writeFileSync(filePath, JSON.stringify(result, null, 2));
-    }
+    });
 
-    if (currentEngine) {
-        currentEngine.stop();
-        currentEngine = null;
-    }
+    evaluations = [...evaluations, ...newResults].sort((a, b) => a.move - b.move);
+    const finalResult = {
+        url: game.url, pgn: game.pgn, white: game.white.username, black: game.black.username,
+        endTime: game.end_time, analysisDepth: depth, evaluations
+    };
+    fs.writeFileSync(filePath, JSON.stringify(finalResult, null, 2));
     
-    log(`[Bot] Analysis complete for ${game.url}`);
+    pool.stop();
+    log(`[Bot] Analysis complete: ${game.url}`);
 
     const PGNS_DIR = path.join(__dirname, 'pgns');
     if (!fs.existsSync(PGNS_DIR)) fs.mkdirSync(PGNS_DIR);
@@ -278,7 +357,7 @@ if (fs.existsSync(RESULTS_DIR)) {
                 log('[Bot] Resume signal - Triggering check');
                 runBot();
                 watchTimer = null;
-            }, 5000); // Throttled resume
+            }, 5000);
         }
     });
 }
@@ -286,7 +365,6 @@ if (fs.existsSync(RESULTS_DIR)) {
 const shutdown = () => {
     log('[Bot] Shutting down bot...');
     clearInterval(mainInterval);
-    if (currentEngine) currentEngine.stop();
     process.exit(0);
 };
 
