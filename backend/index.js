@@ -67,21 +67,28 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/config', (req, res) => {
-    res.json({ chessComUsername: config.chessComUsername || '', timezone: config.timezone || 'Asia/Tokyo' });
+    res.json({ 
+        chessComUsername: config.chessComUsername || '', 
+        timezone: config.timezone || 'Asia/Tokyo',
+        scanDepth: config.scanDepth || 18,
+        analysisDepth: config.analysisDepth || 24
+    });
 });
 
 app.post('/api/save-analysis', (req, res) => {
-    const { gameId, evaluations, pgn, white, black, endTime } = req.body;
+    const { gameId, evaluations, pgn, white, black, endTime, analysisDepth } = req.body;
     if (!gameId || !/^[a-z0-9-]+$/i.test(gameId)) return res.status(400).json({ error: 'Invalid data' });
     
     console.log(`[Backend] Saving frontend analysis: ${gameId} (${evaluations.length} positions)`);
     const filePath = path.join(__dirname, 'results', `${gameId}.json`);
-    let data = { gameId, url: '', pgn, white, black, endTime, evaluations: [], analysisDepth: 18 };
+    const currentDepth = analysisDepth || config.scanDepth || 18;
+    let data = { gameId, url: '', pgn, white, black, endTime, evaluations: [], analysisDepth: currentDepth };
     
     if (fs.existsSync(filePath)) {
         try {
             const existing = JSON.parse(fs.readFileSync(filePath));
-            data = { ...data, ...existing };
+            const mergedDepth = Math.max(existing.analysisDepth || 0, currentDepth);
+            data = { ...data, ...existing, analysisDepth: mergedDepth };
         } catch (e) {}
     }
 

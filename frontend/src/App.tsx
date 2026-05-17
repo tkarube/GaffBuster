@@ -125,6 +125,8 @@ function App() {
   const [players, setPlayers] = useState({ white: 'White', black: 'Black' });
   const [chessComUsername, setChessComUsername] = useState('mebukichi');
   const [timezone, setTimezone] = useState('America/Los_Angeles');
+  const [scanDepth, setScanDepth] = useState<number>(18);
+  const [analysisDepth, setAnalysisDepth] = useState<number>(24);
   const [isPreAnalyzed, setIsPreAnalyzed] = useState<number | false>(false);
   const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
   const [localGames, setLocalGames] = useState<any[]>([]);
@@ -374,12 +376,12 @@ function App() {
                          evaluations: evalData,
                          pgn: (window as any).lastPgn,
                          white: players.white,
-                         black: players.black
+                         black: players.black,
+                         analysisDepth: scanDepth
                        })
                      }).catch(err => console.error('Failed to save analysis to server', err));
                   }
                 }
-
               }
             }
           }
@@ -581,7 +583,7 @@ function App() {
           })
           .then(data => {
             console.log('[App] Using pre-analyzed results from backend');
-            setIsPreAnalyzed(data.analysisDepth || 30);
+            setIsPreAnalyzed(data.analysisDepth || analysisDepth);
             const preEvalData = data.evaluations.map((e: any) => ({
               move: e.move,
               eval: typeof e.eval === 'string' ? (e.eval.startsWith('M') ? (parseFloat(e.eval.substring(1)) > 0 ? 10 : -10) : parseFloat(e.eval)) : e.eval,
@@ -688,6 +690,8 @@ function App() {
     fetch('/api/config')
       .then(res => res.json())
       .then(data => {
+        if (data.scanDepth) setScanDepth(data.scanDepth);
+        if (data.analysisDepth) setAnalysisDepth(data.analysisDepth);
         if (data.chessComUsername) {
           setChessComUsername(data.chessComUsername);
           if (data.timezone) setTimezone(data.timezone);

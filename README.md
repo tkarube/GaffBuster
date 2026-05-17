@@ -4,8 +4,9 @@ GaffBuster is a high-performance, web-based chess analysis application powered b
 
 ## Key Features
 
-- **Parallel Background Analysis**: A redesigned analysis bot uses a **Worker Pool** to analyze multiple positions concurrently, significantly increasing throughput and reaching Depth 30 faster.
-- **Deep Analysis (Depth 30+)**: Optimized for high-memory environments. Supports massive Hash sizes (e.g., 8GB - 32GB) to maintain stable and accurate evaluations at extreme depths.
+- **Dynamic Analysis Depth**: The interface now dynamically displays the actual depth used for each game (e.g., Depth 22 or Depth 30), synchronized with backend configurations.
+- **Parallel Background Analysis**: A redesigned analysis bot uses a **Worker Pool** to analyze multiple positions concurrently, significantly increasing throughput and reaching higher depths faster.
+- **Deep Analysis (Configurable)**: Optimized for high-memory environments. Supports massive Hash sizes (e.g., 8GB - 32GB) to maintain stable and accurate evaluations at extreme depths.
 - **Enhanced Research Mode**:
     - **Interactive Branching**: Freely explore alternate lines at any point in the game history.
     - **Visual Branching Indicator**: Clear visualization of where your research line diverged from the original PGN, including vertical lines on the evaluation graph.
