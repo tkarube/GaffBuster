@@ -3,7 +3,7 @@
   "hash": 512,
   "scanDepth": 22,
   "analysisThreads": 4,
-  "analysisDepth": 24,
+  "analysisDepth": 30,
   "analysisIntervalHours": 1,
   "timezone": "America/Los_Angeles",
   "chessComUsername": "YOUR_CHESS_COM_USERNAME"

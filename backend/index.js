@@ -70,8 +70,8 @@ app.get('/api/config', (req, res) => {
     res.json({ 
         chessComUsername: config.chessComUsername || '', 
         timezone: config.timezone || 'Asia/Tokyo',
-        scanDepth: config.scanDepth || 18,
-        analysisDepth: config.analysisDepth || 24
+        scanDepth: config.scanDepth || 22,
+        analysisDepth: config.analysisDepth || 30
     });
 });
 
@@ -81,7 +81,7 @@ app.post('/api/save-analysis', (req, res) => {
     
     console.log(`[Backend] Saving frontend analysis: ${gameId} (${evaluations.length} positions)`);
     const filePath = path.join(__dirname, 'results', `${gameId}.json`);
-    const currentDepth = analysisDepth || config.scanDepth || 18;
+    const currentDepth = analysisDepth || config.scanDepth || 22;
     let data = { gameId, url: '', pgn, white, black, endTime, evaluations: [], analysisDepth: currentDepth };
     
     if (fs.existsSync(filePath)) {
@@ -260,7 +260,7 @@ wss.on('connection', (ws) => {
                 }
             } else if (cmd.type === 'scan_position') {
                 if (cmd.fen) {
-                    const depth = config.scanDepth || 18;
+                    const depth = config.scanDepth || 22;
                     stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
                 }
             } else if (cmd.type === 'stop') {

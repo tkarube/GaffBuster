@@ -308,7 +308,6 @@ header h1 {
 }
 
 .pre-analyzed-badge {
-  background-color: #5c8d4d;
   color: white;
   font-size: 10px;
   padding: 2px 6px;
@@ -318,6 +317,14 @@ header h1 {
   font-weight: bold;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.pre-analyzed-badge.deep {
+  background-color: #9c27b0; /* Purple for deep analysis */
+}
+
+.pre-analyzed-badge.regular {
+  background-color: #5c8d4d; /* Green for regular pre-analyzed */
 }
 
 .btn-reset {

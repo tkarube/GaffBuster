@@ -5,33 +5,11 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Refe
 import './App.css';
 
 // --- Types ---
-interface Candidate {
-  rank: number;
-  score: string;
-  move: string;
-}
-
 interface GraphPoint {
   move: number;
   eval: number;
   quality?: 'brilliant' | 'great' | 'best' | 'mistake' | 'miss' | 'blunder' | 'normal';
 }
-
-interface MoveStats {
-  brilliant: number;
-  great: number;
-  best: number;
-  excellent: number;
-  good: number;
-  inaccuracy: number;
-  mistake: number;
-  miss: number;
-  blunder: number;
-}
-
-const INITIAL_STATS: MoveStats = { 
-  brilliant: 0, great: 0, best: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, miss: 0, blunder: 0 
-};
 
 // --- Sub-Components ---
 
@@ -117,7 +95,6 @@ function App() {
   const allFensRef = useRef<string[]>(['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']);
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [pgn, setPgn] = useState('');
   const [pgnResult, setPgnResult] = useState<string | null>(null);
   const [chessComGames, setChessComGames] = useState<any[]>([]);
   const [loadingGames, setLoadingGames] = useState(false);
@@ -125,8 +102,8 @@ function App() {
   const [players, setPlayers] = useState({ white: 'White', black: 'Black' });
   const [chessComUsername, setChessComUsername] = useState('mebukichi');
   const [timezone, setTimezone] = useState('America/Los_Angeles');
-  const [scanDepth, setScanDepth] = useState<number>(18);
-  const [analysisDepth, setAnalysisDepth] = useState<number>(24);
+  const [scanDepth, setScanDepth] = useState<number>(22);
+  const [analysisDepth, setAnalysisDepth] = useState<number>(30);
   const [isPreAnalyzed, setIsPreAnalyzed] = useState<number | false>(false);
   const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
   const [localGames, setLocalGames] = useState<any[]>([]);
@@ -457,7 +434,7 @@ function App() {
         
         if (missing.length > 0) {
           const currentQueueIndices = new Set(scanQueueRef.current.map(q => q.index));
-          const toAdd = missing.filter(m => !currentQueueIndices.has(m.index));
+          const toAdd = missing.filter((m: any) => !currentQueueIndices.has(m.index));
           if (toAdd.length > 0) {
             scanQueueRef.current = [...scanQueueRef.current, ...toAdd].sort((a, b) => a.index - b.index);
             processNextScan();
@@ -536,7 +513,6 @@ function App() {
       
       setCurrentIndex(0);
       setFen(fens[0]);
-      setPgn(pgnString);
       (window as any).lastPgn = pgnString;
 
       const gameUrl = tempGame.header().Link || '';
@@ -915,7 +891,11 @@ function App() {
           <div className="graph-container">
             <div className="graph-header">
               <h3>Evaluation Graph</h3>
-              {isPreAnalyzed && <span className="pre-analyzed-badge">Deep Analysis (Depth {isPreAnalyzed})</span>}
+              {isPreAnalyzed && (
+                <span className={`pre-analyzed-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
+                  {isPreAnalyzed >= 30 ? 'Deep Analysis' : 'Pre-Analyzed'} (Depth {isPreAnalyzed})
+                </span>
+              )}
             </div>
             <div style={{ height: '100px', width: '310px' }}>
               <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} branchingPoint={branchingPoint} />

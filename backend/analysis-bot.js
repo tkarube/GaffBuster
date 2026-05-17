@@ -221,7 +221,7 @@ class WorkerPool {
 let isRunning = false;
 
 async function analyzeGame(game, config) {
-    const depth = config.analysisDepth || 24;
+    const depth = config.analysisDepth || 30;
     const gameId = game.url.split('/').pop();
     const fileName = `${gameId}.json`;
     const filePath = path.join(RESULTS_DIR, fileName);
