@@ -81,11 +81,16 @@ app.post('/api/save-analysis', (req, res) => {
     
     console.log(`[Backend] Saving frontend analysis: ${gameId} (${evaluations.length} positions)`);
     const filePath = path.join(__dirname, 'results', `${gameId}.json`);
+    const pgnPath = path.join(__dirname, 'pgns', `${gameId}.pgn`);
     const currentDepth = analysisDepth || config.scanDepth || 22;
     let data = { gameId, url: '', pgn, white, black, endTime, evaluations: [], analysisDepth: currentDepth };
-    
-    if (fs.existsSync(filePath)) {
-        try {
+
+    if (pgn) {
+        if (!fs.existsSync(path.join(__dirname, 'pgns'))) fs.mkdirSync(path.join(__dirname, 'pgns'), { recursive: true });
+        fs.writeFileSync(pgnPath, pgn);
+    }
+
+    if (fs.existsSync(filePath)) {        try {
             const existing = JSON.parse(fs.readFileSync(filePath));
             const mergedDepth = Math.max(existing.analysisDepth || 0, currentDepth);
             data = { ...data, ...existing, analysisDepth: mergedDepth };
@@ -227,16 +232,14 @@ wss.on('connection', (ws) => {
             const cmd = JSON.parse(msg.toString());
             console.log(`[Backend] Received command: ${cmd.type}`);
             if (cmd.type === 'uci') {
-                const totalThreads = config.threads || totalCores || 1;
-                const totalHash = config.hash || 128;
+                const totalThreads = config.threads || 8;
+                const totalHash = config.hash || 8192;
                 
-                // Optimized allocation: 75% for Main (Interactive), 25% for Scan (Graph)
-                // This prevents extreme contention while keeping both responsive.
-                const mainThreads = Math.max(1, Math.floor(totalThreads * 0.75));
+                // 50/50 split for threads and hash to accelerate background scanning
+                const mainThreads = Math.max(1, Math.floor(totalThreads * 0.5));
                 const scanThreads = Math.max(1, totalThreads - mainThreads);
                 
-                // Balance hash: give 25% to scan, 75% to main (min 32MB each)
-                const mainHash = Math.max(32, Math.floor(totalHash * 0.75));
+                const mainHash = Math.max(32, Math.floor(totalHash * 0.5));
                 const scanHash = Math.max(32, totalHash - mainHash);
 
                 console.log(`[Backend] UCI Setup - Main: ${mainThreads}T/${mainHash}MB, Scan: ${scanThreads}T/${scanHash}MB (Total: ${totalThreads}T)`);

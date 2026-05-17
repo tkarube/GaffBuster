@@ -165,8 +165,8 @@ class WorkerPool {
     }
 
     async init() {
-        const totalThreads = this.config.analysisThreads || this.config.threads || totalCores || 1;
-        const totalHash = this.config.hash || 512;
+        const totalThreads = this.config.analysisThreads || this.config.threads || 8;
+        const totalHash = this.config.hash || 8192;
         
         const threadsPerWorker = Math.max(1, Math.floor(totalThreads / this.poolSize));
         const hashPerWorker = Math.max(32, Math.floor(totalHash / this.poolSize));
@@ -201,7 +201,13 @@ class WorkerPool {
                     queue.unshift(task);
                     continue;
                 }
-                const resultObj = { move: task.moveIndex, fen: task.fen, eval: evalValue };
+                
+                // Convert to White-POV: Stockfish gives POV of side-to-move
+                const turn = task.fen.split(' ')[1];
+                const side = (turn === 'w') ? 1 : -1;
+                const whitePovScore = (side * evalValue) / 100;
+                
+                const resultObj = { move: task.moveIndex, fen: task.fen, eval: whitePovScore };
                 results.push(resultObj);
                 completed++;
                 onProgress(completed, tasks.length, worker.lastNps, results);

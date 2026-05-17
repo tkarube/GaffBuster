@@ -9,38 +9,108 @@ interface GraphPoint {
   move: number;
   eval: number;
   quality?: 'brilliant' | 'great' | 'best' | 'mistake' | 'miss' | 'blunder' | 'normal';
+  analyzed?: boolean;
 }
 
+// --- Utilities ---
+
+/**
+ * Standard Chess Evaluation Parser (Always White-POV)
+ * Positive = White advantage, Negative = Black advantage.
+ */
+const parseStockfishScore = (line: string, turn: 'w' | 'b') => {
+  const cpMatch = line.match(/score\s+cp\s+(-?\d+)/);
+  const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
+  if (!cpMatch && !mateMatch) return null;
+
+  const side = (turn === 'w') ? 1 : -1;
+  let score = 0;
+  let label = '';
+
+  if (cpMatch) {
+    const cp = parseInt(cpMatch[1]);
+    // Stockfish cp is relative to side-to-move. White-POV = cp * side / 100
+    score = (side * cp) / 100;
+    const sign = score > 0 ? '+' : (score < 0 ? '-' : '');
+    label = `${sign}${Math.abs(score).toFixed(2)}`;
+    if (Math.abs(score) < 0.001) label = '0.00';
+  } else if (mateMatch) {
+    const mateIn = parseInt(mateMatch[1]);
+    // mateIn > 0 means current side wins. White-POV (+10/-10)
+    score = side * (mateIn > 0 ? 10 : -10);
+    const mateSym = score > 0 ? '+' : '-';
+    label = `M${mateSym}${Math.abs(mateIn)}`;
+  }
+  return { score, label };
+};
+
+/**
+ * Returns 'winning' if the user has the advantage, 'losing' otherwise.
+ * Handles both numeric scores and formatted strings (M+1, -1.50, etc.)
+ */
+const getEvalColorClass = (val: string | number | null, userColor: 'w' | 'b' | null) => {
+  if (val === null || !userColor) return '';
+
+  let score = 0;
+  if (typeof val === 'string') {
+    if (val.startsWith('M')) {
+      const isWhiteWinning = val.includes('+');
+      const isWinning = (userColor === 'w' && isWhiteWinning) || (userColor === 'b' && !isWhiteWinning);
+      const isLosing = (userColor === 'w' && !isWhiteWinning) || (userColor === 'b' && isWhiteWinning);
+      return isWinning ? 'winning' : (isLosing ? 'losing' : '');
+    }
+    score = parseFloat(val);
+  } else {
+    score = val;
+  }
+
+  if (isNaN(score) || Math.abs(score) < 0.001) return '';
+  const isWinning = (userColor === 'w' && score > 0) || (userColor === 'b' && score < 0);
+  const isLosing = (userColor === 'w' && score < 0) || (userColor === 'b' && score > 0);
+  return isWinning ? 'winning' : (isLosing ? 'losing' : '');
+};
 // --- Sub-Components ---
 
-const CustomTooltip = ({ active, payload, isPreAnalyzed, branchingPoint }: any) => {
+const CustomTooltip = ({ active, payload, userColor }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
-    const isActuallyPreAnalyzed = isPreAnalyzed && (branchingPoint === null || data.move <= branchingPoint);
+    const evalNum = data.eval;
+    
+    const sign = evalNum > 0 ? '+' : (evalNum < 0 ? '-' : '');
+    let displayVal = `${sign}${Math.abs(evalNum).toFixed(2)}`;
+    if (Math.abs(evalNum) < 0.001) displayVal = '0.00';
+    if (Math.abs(evalNum) >= 9.9) displayVal = evalNum > 0 ? 'M+' : 'M-';
+
+    const colorClass = getEvalColorClass(evalNum, userColor);
+
     return (
-      <div className="custom-graph-tooltip">
-        <div className="tooltip-move">Move {data.move}</div>
-        <div className="tooltip-eval">Eval: {data.eval > 0 ? `+${data.eval}` : data.eval}</div>
-        {isActuallyPreAnalyzed && (
-          <div className="tooltip-depth">Depth {isPreAnalyzed} (Pre-Analyzed)</div>
-        )}
+      <div className="custom-graph-tooltip-mini">
+        M{data.move}: <span className={`tooltip-eval-val ${colorClass}`}>{displayVal}</span>
       </div>
     );
   }
   return null;
 };
 
-const EvaluationBar = memo(({ evaluation }: { evaluation: string | null }) => {
+const EvaluationBar = memo(({ evaluation, userColor }: { evaluation: string | null, userColor: 'w' | 'b' | null }) => {
   const getEvalPercentage = () => {
     if (!evaluation) return 50;
-    if (evaluation.startsWith('M')) return evaluation.includes('-') ? 0 : 100;
-    const score = parseFloat(evaluation);
-    const percent = 50 + (score / 10) * 50;
+    
+    let whitePovScore = 0;
+    if (evaluation.startsWith('M')) {
+      return evaluation.includes('+') ? 100 : 0;
+    } else {
+      whitePovScore = parseFloat(evaluation);
+    }
+    
+    if (isNaN(whitePovScore)) return 50;
+    // White wins = 100%, Black wins = 0%
+    const percent = 50 + (whitePovScore / 10) * 50;
     return Math.max(0, Math.min(100, percent));
   };
 
   return (
-    <div className="evaluation-bar">
+    <div className="evaluation-bar" title={`Evaluation: ${evaluation || '0.00'}`}>
       <div className="evaluation-bar-fill" style={{ height: `${getEvalPercentage()}%` }}></div>
     </div>
   );
@@ -64,35 +134,93 @@ const CustomDot = (props: any) => {
   return <circle cx={cx} cy={cy} r={radius} fill={color} stroke="none" />;
 };
 
-const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint, isPreAnalyzed }: any) => {
+const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint, isPreAnalyzed, showOverlay, userColor, onHover }: any) => {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
   if (data.length === 0) {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
 
-  // Flip evaluation if orientation is black (black is at bottom)
+  const activeIdx = hoverIdx !== null ? hoverIdx : (showOverlay ? currentIndex : null);
+  const currentPoint = data[activeIdx ?? currentIndex] || data[0];
+  const evalNum = currentPoint.eval;
+  
+  const sign = evalNum > 0 ? '+' : (evalNum < 0 ? '-' : '');
+  let displayEval = `${sign}${Math.abs(evalNum).toFixed(2)}`;
+  if (Math.abs(evalNum) < 0.001) displayEval = '0.00';
+  if (Math.abs(evalNum) >= 9.9) displayEval = evalNum > 0 ? 'M+' : 'M-';
+
+  const colorClass = getEvalColorClass(evalNum, userColor);
+
+  // visual orientation is FIXED to White-POV (Up=White, Down=Black)
   const orientedData = data.map((d: any) => ({
     ...d,
-    displayEval: boardOrientation === 'black' ? -d.eval : d.eval
+    displayEval: d.eval 
   }));
 
+  const handleClick = (d: any) => {
+    if (d && d.activeTooltipIndex !== undefined) {
+      onJump(d.activeTooltipIndex, true);
+      window.focus();
+    }
+  };
+
+  const handleMouseMove = (d: any) => {
+    if (d && d.activeTooltipIndex !== undefined) {
+      const idx = d.activeTooltipIndex;
+      setHoverIdx(idx);
+      
+      const point = data[idx] || data[0];
+      const pEval = point.eval;
+      const pSign = pEval > 0 ? '+' : (pEval < 0 ? '-' : '');
+      let pLabel = `${pSign}${Math.abs(pEval).toFixed(2)}`;
+      if (Math.abs(pEval) < 0.001) pLabel = '0.00';
+      if (Math.abs(pEval) >= 9.9) pLabel = pEval > 0 ? 'M+' : 'M-';
+
+      if (onHover) onHover(idx, pLabel);
+    } else {
+      setHoverIdx(null);
+      if (onHover) onHover(null, null);
+    }
+  };
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={orientedData}
-        onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex, true)}
-        margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
-      >
-        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" />
-        <XAxis dataKey="move" hide />
-        <YAxis domain={[-10, 10]} hide />
-        <Tooltip content={<CustomTooltip isPreAnalyzed={isPreAnalyzed} branchingPoint={branchingPoint} />} />
-        <ReferenceLine y={0} stroke="#666" />
-        {branchingPoint !== null && (
-          <ReferenceLine x={branchingPoint} stroke="#ff9800" strokeWidth={2} strokeDasharray="5 5" label={{ value: 'Branch', position: 'top', fill: '#ff9800', fontSize: 10 }} />
-        )}
-        <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
-        <Line type="monotone" dataKey="displayEval" stroke="#4caf50" strokeWidth={2} dot={<CustomDot />} isAnimationActive={false} />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="graph-wrapper-relative" onMouseLeave={() => {
+      setHoverIdx(null);
+      if (onHover) onHover(null, null);
+    }}>
+      <ResponsiveContainer width="100%" height={100}>
+        <LineChart data={orientedData}
+          onClick={handleClick}
+          onMouseMove={handleMouseMove}
+          margin={{ top: 10, right: 5, left: 5, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" />
+          <XAxis dataKey="move" hide />
+          <YAxis domain={[-10, 10]} hide />
+          <Tooltip 
+            content={<CustomTooltip userColor={userColor} />} 
+            isAnimationActive={false} 
+            cursor={false}
+            active={false}
+          />
+          <ReferenceLine y={0} stroke="#444" />
+          {branchingPoint !== null && (
+            <ReferenceLine x={branchingPoint} stroke="#ff9800" strokeWidth={1} strokeDasharray="5 5" />
+          )}
+          <ReferenceLine x={currentIndex} stroke="#4caf50" strokeWidth={2} strokeDasharray="3 3" />
+          <Line 
+            type="monotone" 
+            dataKey="displayEval" 
+            stroke="#4caf50" 
+            strokeWidth={2} 
+            dot={<CustomDot />} 
+            activeDot={false}
+            isAnimationActive={false} 
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 });
 const formatPgnDate = (date: string, time: string, tz: string) => {
@@ -133,6 +261,10 @@ function App() {
 
   const [evaluation, setEvaluation] = useState<string | null>(null);
 
+  const [showGraphOverlay, setShowGraphOverlay] = useState(false);
+  const [graphHoverIdx, setGraphHoverIdx] = useState<number | null>(null);
+  const [graphHoverEval, setGraphHoverEval] = useState<string | null>(null);
+
   const [candidates, setCandidates] = useState<any[]>([]);
   const [graphData, setGraphData] = useState<GraphPoint[]>([]);
   const [stats, setStats] = useState<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
@@ -146,7 +278,9 @@ function App() {
   const graphDataRef = useRef<GraphPoint[]>([]);
   const statsRef = useRef<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const opponentStatsRef = useRef<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
+  const [userColor, setUserColor] = useState<'w' | 'b' | null>(null);
   const userColorRef = useRef<'w' | 'b' | null>(null);
+  useEffect(() => { userColorRef.current = userColor; }, [userColor]);
   const originalGameRef = useRef<any>(null);
   const originalGraphDataRef = useRef<GraphPoint[]>([]);
   const currentGameIdRef = useRef<string | null>(null);
@@ -166,17 +300,31 @@ function App() {
   const scanTimeoutRef = useRef<any>(null);
 
   const processNextScan = useCallback(() => {
-    if (isScanningRef.current !== false || scanQueueRef.current.length === 0) {
+    if (scanQueueRef.current.length === 0) {
+      console.log('[App] [DEBUG] processNextScan: queue empty');
+      if (isScanningRef.current === false) {
+        setIsScanning(false);
+        setScanQueueLength(0);
+      }
+      return;
+    }
+
+    if (isScanningRef.current !== false) {
+      console.log(`[App] [DEBUG] processNextScan: already scanning move ${isScanningRef.current}`);
       setIsScanning(isScanningRef.current);
       setScanQueueLength(scanQueueRef.current.length);
       return;
     }
+
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      console.log('[App] [DEBUG] processNextScan: WS not ready (state=' + (socketRef.current?.readyState ?? 'null') + '), retrying in 500ms');
       setTimeout(() => processNextScan(), 500);
       return;
     }
+
     const next = scanQueueRef.current.shift();
     if (next) {
+      console.log(`[App] [DEBUG] processNextScan: [START] move ${next.index}, remaining=${scanQueueRef.current.length}`);
       isScanningRef.current = next.index;
       setIsScanning(next.index);
       setScanQueueLength(scanQueueRef.current.length);
@@ -186,7 +334,7 @@ function App() {
       // Watchdog: Reset scanning state if it takes too long (10s)
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = setTimeout(() => {
-        console.log(`[App] Scan watchdog triggered for move ${next.index}. Resetting...`);
+        console.log(`[App] [DEBUG] Scan watchdog triggered for move ${next.index}. Resetting...`);
         isScanningRef.current = false;
         setIsScanning(false);
         processNextScan();
@@ -241,7 +389,7 @@ function App() {
   // Initial scan trigger
   useEffect(() => {
     if (scanQueueRef.current.length === 0 && graphDataRef.current.length === 0 && isScanningRef.current === false) {
-      graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
+      graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal', analyzed: true }];
       scanQueueRef.current.push({ fen: allFens[0], index: 0 });
       setScanQueueLength(scanQueueRef.current.length);
       processNextScan();
@@ -261,7 +409,7 @@ function App() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
       console.log(`[App] Connecting to WebSocket via proxy at ${protocol}//${host}/ws`);
-      
+
       socket = new WebSocket(`${protocol}//${host}/ws`);
       socketRef.current = socket;
       setWsStatus('connecting');
@@ -289,19 +437,13 @@ function App() {
         console.error('[App] WebSocket Error:', err);
       };
 
-    socket.onmessage = (event) => {
+      socket.onmessage = (event) => {
         if (!isMounted) return;
         const message = JSON.parse(event.data);
-        console.log(`[App] WS Message: type=${message.type}, engine=${message.engine}`);
-        if (message.type === 'error') {
-          alert(message.data);
-          return;
-        }
 
-        // Prioritize scan engine messages for graph responsiveness
+        // Prioritize scan engine messages
         if (message.engine === 'scan' || message.type === 'scan_complete') {
           if (message.type === 'scan_complete') {
-            console.log(`[App] Scan complete for move ${isScanningRef.current}`);
             if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
             const q = currentMoveQualityRef.current;
             const idx = isScanningRef.current;
@@ -316,14 +458,15 @@ function App() {
               else if (q === 'miss') s.miss++;
               else if (q === 'blunder') s.blunder++;
             }
+
             isScanningRef.current = false;
-            setIsScanning(false);
-            setScanQueueLength(scanQueueRef.current.length);
+
             if (scanQueueRef.current.length > 0) {
-              console.log(`[App] Queue has ${scanQueueRef.current.length} moves left. Continuing...`);
-              setTimeout(() => processNextScan(), 0); // Immediate next scan
+              setScanQueueLength(scanQueueRef.current.length);
+              processNextScan(); 
             } else {
-              console.log('[App] Scan queue empty. Starting main analysis.');
+              setIsScanning(false);
+              setScanQueueLength(0);
               setCurrentlyAnalyzingGameId(null);
               if (currentGameIdRef.current) {
                 const localKey = `analysis_${currentGameIdRef.current}`;
@@ -342,17 +485,15 @@ function App() {
           }
 
           if (message.type === 'info') {
-            const line = message.data;
-            const cpMatch = line.match(/score\s+cp\s+(-?\d+)/);
-            const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
-            if (cpMatch || mateMatch) {
-              const lastIdx = isScanningRef.current;
-              if (typeof lastIdx === 'number' && allFensRef.current[lastIdx]) {
-                const sideToMove = allFensRef.current[lastIdx].includes(' w ') ? 1 : -1;
-                let score = cpMatch ? (sideToMove * parseInt(cpMatch[1]) / 100) : (sideToMove * (parseInt(mateMatch![1]) > 0 ? 10 : -10));
-                score = Math.max(-10, Math.min(10, score));
+            const lastIdx = isScanningRef.current;
+            if (typeof lastIdx === 'number' && allFensRef.current[lastIdx] && currentGameIdRef.current) {
+              const turn = allFensRef.current[lastIdx].split(' ')[1] as 'w' | 'b';
+              const parsed = parseStockfishScore(message.data, turn);
+              if (parsed) {
+                const { score } = parsed;
                 const newData = [...graphDataRef.current];
                 while (newData.length <= lastIdx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
+
                 let quality: any = 'normal';
                 if (lastIdx > 0 && newData[lastIdx - 1]) {
                   const prevEval = newData[lastIdx - 1].eval;
@@ -364,14 +505,14 @@ function App() {
                   else if (delta <= -1.5) quality = 'miss';
                   else if (delta <= -0.8) quality = 'mistake';
                 }
-                newData[lastIdx] = { move: lastIdx, eval: score, quality };
+
+                newData[lastIdx] = { move: lastIdx, eval: score, quality, analyzed: true };
                 graphDataRef.current = newData;
-                
-                // Sync main line data if this move is part of it
+
                 if (branchingPoint === null || lastIdx <= branchingPoint) {
                   const mainData = [...originalGraphDataRef.current];
                   if (mainData[lastIdx]) {
-                    mainData[lastIdx] = { ...mainData[lastIdx], eval: score, quality };
+                    mainData[lastIdx] = { ...mainData[lastIdx], eval: score, quality, analyzed: true };
                     originalGraphDataRef.current = mainData;
                   }
                 }
@@ -379,26 +520,23 @@ function App() {
                 currentMoveQualityRef.current = quality;
                 setGraphData([...newData]);
 
-                if (currentGameIdRef.current) {
-                  const localKey = `analysis_${currentGameIdRef.current}`;
-                  const evalData = newData.map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
-                  localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
+                const localKey = `analysis_${currentGameIdRef.current}`;
+                const evalData = newData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
+                localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
 
-                  // Periodically save to backend (every 5 moves or completion)
-                  if (lastIdx % 5 === 0 || scanQueueRef.current.length === 0) {
-                     fetch('/api/save-analysis', {
-                       method: 'POST',
-                       headers: { 'Content-Type': 'application/json' },
-                       body: JSON.stringify({
-                         gameId: currentGameIdRef.current,
-                         evaluations: evalData,
-                         pgn: (window as any).lastPgn,
-                         white: players.white,
-                         black: players.black,
-                         analysisDepth: scanDepth
-                       })
-                     }).catch(err => console.error('Failed to save analysis to server', err));
-                  }
+                if (lastIdx % 5 === 0 || scanQueueRef.current.length === 0) {
+                   fetch('/api/save-analysis', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({
+                       gameId: currentGameIdRef.current,
+                       evaluations: evalData,
+                       pgn: (window as any).lastPgn,
+                       white: players.white,
+                       black: players.black,
+                       analysisDepth: scanDepth
+                     })
+                   }).catch(err => console.error('Failed to save analysis to server', err));
                 }
               }
             }
@@ -406,29 +544,24 @@ function App() {
           return;
         }
 
-        // Secondary priority: Main engine analysis (Next Move)
+        // Main engine analysis
         if (message.type === 'info' && message.engine === 'main') {
           const line = message.data;
           const pvMatch = line.match(/multipv\s+(\d+)/);
           if (pvMatch) {
             const rank = parseInt(pvMatch[1]);
-            const cpMatch = line.match(/score\s+cp\s+(-?\d+)/);
-            const mateMatch = line.match(/score\s+mate\s+(-?\d+)/);
             const pvMoveMatch = line.match(/\spv\s+(\w+)/);
-            const pov = fenRef.current.includes(' w ') ? 1 : -1;
-            let scoreStr = '';
-            if (cpMatch) {
-              scoreStr = (pov * parseInt(cpMatch[1]) / 100).toFixed(2);
-            } else if (mateMatch) {
-              scoreStr = `M${pov * parseInt(mateMatch[1])}`;
-            }
-            if (scoreStr && pvMoveMatch) {
+            const turn = fenRef.current.split(' ')[1] as 'w' | 'b';
+            const parsed = parseStockfishScore(line, turn);
+
+            if (parsed && pvMoveMatch) {
+              const { label } = parsed;
               const cur = [...candidatesRef.current];
               const idx = cur.findIndex(c => c.rank === rank);
-              if (idx >= 0) cur[idx] = { rank, score: scoreStr, move: pvMoveMatch[1] };
-              else cur.push({ rank, score: scoreStr, move: pvMoveMatch[1] });
+              if (idx >= 0) cur[idx] = { rank, score: label, move: pvMoveMatch[1] };
+              else cur.push({ rank, score: label, move: pvMoveMatch[1] });
               candidatesRef.current = cur.sort((a, b) => a.rank - b.rank).slice(0, 3);
-              if (rank === 1) evalRef.current = scoreStr;
+              if (rank === 1) evalRef.current = label;
             }
           }
         }
@@ -443,7 +576,6 @@ function App() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
   }, [processNextScan, startMainAnalysis]);
-
   useEffect(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN && fen) {
       startMainAnalysis();
@@ -451,8 +583,18 @@ function App() {
   }, [fen, startMainAnalysis]);
 
   const goToMove = useCallback((index: number, fromGraph = false) => {
+    const targetIndex = Number(index);
+    if (isNaN(targetIndex)) return;
+
+    // Hide graph info overlay if navigating manually (not from graph click)
+    if (!fromGraph) {
+      setShowGraphOverlay(false);
+    } else {
+      setShowGraphOverlay(true);
+    }
+
     // If clicking from graph on/before the branch origin, restore main line
-    if (fromGraph && branchingPoint !== null && index <= branchingPoint && originalGameRef.current) {
+    if (fromGraph && branchingPoint !== null && targetIndex <= branchingPoint && originalGameRef.current) {
       const main = originalGameRef.current;
       setAllFens(main.allFens);
       allFensRef.current = main.allFens;
@@ -464,7 +606,7 @@ function App() {
       graphDataRef.current = restoredGraph;
       setGraphData(restoredGraph);
       
-      const safeIndex = Math.max(0, Math.min(index, main.allFens.length - 1));
+      const safeIndex = Math.max(0, Math.min(targetIndex, main.allFens.length - 1));
       setCurrentIndex(safeIndex);
       setFen(main.allFens[safeIndex]);
 
@@ -485,33 +627,42 @@ function App() {
       return;
     }
 
-    if (index >= 0 && index < allFens.length) {
-      setCurrentIndex(index);
-      setFen(allFens[index]);
+    if (targetIndex >= 0 && targetIndex < allFens.length) {
+      setCurrentIndex(targetIndex);
+      setFen(allFens[targetIndex]);
     }
   }, [allFens, branchingPoint, isPreAnalyzed, processNextScan]);
+
+  const onJump = useCallback((idx: number, fromGraph = false) => {
+    goToMove(idx, fromGraph);
+  }, [goToMove]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
       if (e.key === 'ArrowRight') {
-        setCurrentIndex(prev => {
-          const next = prev + 1;
-          if (next < allFens.length) { setFen(allFens[next]); return next; }
-          return prev;
-        });
+        if (currentIndex < allFens.length - 1) {
+          goToMove(currentIndex + 1);
+        }
       }
       else if (e.key === 'ArrowLeft') {
-        setCurrentIndex(prev => {
-          const next = prev - 1;
-          if (next >= 0) { setFen(allFens[next]); return next; }
-          return prev;
-        });
+        if (currentIndex > 0) {
+          goToMove(currentIndex - 1);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [allFens]);
+  }, [currentIndex, allFens.length, goToMove]);
+
+  const clearLocalCache = () => {
+    if (window.confirm('Clear all local analysis results from browser memory?')) {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('analysis_')) localStorage.removeItem(key);
+      });
+      window.location.reload();
+    }
+  };
 
   const processPgn = (pgnString: string) => {
     if (!pgnString) return;
@@ -520,9 +671,8 @@ function App() {
       tempGame.loadPgn(pgnString.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim());
       const whitePlayer = tempGame.header().White;
       const uColor = (whitePlayer?.toLowerCase() === chessComUsername.toLowerCase()) ? 'w' : 'b';
-      userColorRef.current = uColor;
-      setBoardOrientation(uColor === 'w' ? 'white' : 'black');
-      setPlayers({ white: tempGame.header().White || 'White', black: tempGame.header().Black || 'Black' });
+      setUserColor(uColor);
+      setBoardOrientation(uColor === 'w' ? 'white' : 'black');      setPlayers({ white: tempGame.header().White || 'White', black: tempGame.header().Black || 'Black' });
       const history = tempGame.history({ verbose: true });
       const fens: string[] = [];
       const moveSqs: any[] = [null];
@@ -538,11 +688,19 @@ function App() {
 
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: 'stop' }));
+        socketRef.current.send(JSON.stringify({ type: 'stop_scan' }));
       }
       setAnalysisStartTime(null);
       evalRef.current = null;
       setCandidates([]);
       setEvaluation(null);
+
+      // Reset scanning state completely for the new game
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+      isScanningRef.current = false;
+      setIsScanning(false);
+      scanQueueRef.current = [];
+      setScanQueueLength(0);
 
       setAllFens(fens);
       allFensRef.current = fens;
@@ -559,33 +717,57 @@ function App() {
       const gameUrl = tempGame.header().Link || '';
       const gameId = gameUrl.split('/').pop() || `temp_${Date.now()}`;
       currentGameIdRef.current = gameId;
-      setCurrentlyAnalyzingGameId(gameId);
+      setCurrentlyAnalyzingGameId(gameId); // Set it early
       setSelectedGameId(gameId);
 
-      const initialGraph = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' as any }));
+      const initialGraph = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' as any, analyzed: i === 0 }));
       graphDataRef.current = initialGraph;
       originalGraphDataRef.current = [...initialGraph];
       statsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
       opponentStatsRef.current = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+      setStats({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
+      setOpponentStats({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
 
-      // Load temporary results from localStorage if they exist
+      // Load temporary results from localStorage
       const localKey = `analysis_${gameId}`;
       const saved = localStorage.getItem(localKey);
       const savedIndices = new Set<number>();
+      savedIndices.add(0);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
           if (parsed.evaluations) {
+            console.log(`[App] [DEBUG] Loading ${parsed.evaluations.length} evals from localStorage`);
             const loadedData = [...graphDataRef.current];
+            const s = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+            const os = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+
             parsed.evaluations.forEach((e: any) => {
               if (loadedData[e.move]) {
-                loadedData[e.move] = { ...loadedData[e.move], eval: e.eval, quality: e.quality || 'normal' };
+                const quality = e.quality || 'normal';
+                loadedData[e.move] = { ...loadedData[e.move], eval: e.eval, quality, analyzed: true };
                 savedIndices.add(e.move);
+
+                if (quality !== 'normal') {
+                  const playerMoved = (e.move % 2 !== 0) ? 'w' : 'b';
+                  const isUser = userColor === playerMoved;
+                  const target = isUser ? s : os;
+                  if (quality === 'brilliant') target.brilliant++;
+                  else if (quality === 'great') target.great++;
+                  else if (quality === 'best') target.best++;
+                  else if (quality === 'mistake') target.mistake++;
+                  else if (quality === 'miss') target.miss++;
+                  else if (quality === 'blunder') target.blunder++;
+                }
               }
             });
             graphDataRef.current = loadedData;
             originalGraphDataRef.current = [...loadedData];
             setGraphData([...loadedData]);
+            statsRef.current = s;
+            opponentStatsRef.current = os;
+            setStats(s);
+            setOpponentStats(os);
           }
         } catch (e) { console.error('Failed to load local analysis', e); }
       }
@@ -601,17 +783,47 @@ function App() {
             throw new Error('No pre-analysis found');
           })
           .then(data => {
-            console.log('[App] Using pre-analyzed results from backend');
+            if (currentGameIdRef.current !== gameId) return;
+            console.log(`[App] [DEBUG] Pre-analysis fetch success: ${data.evaluations.length} positions`);
             setIsPreAnalyzed(data.analysisDepth || analysisDepth);
-            const preEvalData = data.evaluations.map((e: any) => ({
-              move: e.move,
-              eval: typeof e.eval === 'string' ? (e.eval.startsWith('M') ? (parseFloat(e.eval.substring(1)) > 0 ? 10 : -10) : parseFloat(e.eval)) : e.eval,
-              quality: 'normal' as any
-            }));
+            
+            // Merge backend data with existing (local) data
+            const mergedData = [...graphDataRef.current];
+            const s = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
+            const os = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
 
-            for (let i = 1; i < preEvalData.length; i++) {
-              const score = preEvalData[i].eval;
-              const prevEval = preEvalData[i-1].eval;
+            data.evaluations.forEach((e: any) => {
+              if (mergedData[e.move]) {
+                let evalVal = 0;
+                if (typeof e.eval === 'string') {
+                  // M+3 / M-1 labels
+                  evalVal = e.eval.startsWith('M+') ? 10 : (e.eval.startsWith('M-') ? -10 : parseFloat(e.eval));
+                } else {
+                  // HEURISTIC: Legacy backend data uses integers (cp), 
+                  // while frontend and new backend use floats (cp/100).
+                  // If it's an integer and Math.abs > 10, it's likely legacy side-to-move.
+                  // However, a score of 0 or small ints are ambiguous.
+                  // We'll check if any evaluation in the set is > 10.
+                  const isLegacy = !data.evaluations.every((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) < 50);
+                  
+                  if (isLegacy && Math.abs(e.eval) > 0.001) {
+                    const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
+                    const side = (turn === 'w') ? 1 : -1;
+                    evalVal = (side * e.eval) / 100;
+                  } else {
+                    evalVal = e.eval;
+                  }
+                }
+                mergedData[e.move] = { ...mergedData[e.move], eval: evalVal, analyzed: true };
+                savedIndices.add(e.move);
+              }
+            });
+
+            // Re-calculate all qualities and stats
+            for (let i = 1; i < mergedData.length; i++) {
+              if (!mergedData[i].analyzed) continue;
+              const score = mergedData[i].eval;
+              const prevEval = mergedData[i-1].eval;
               const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
               let quality: any = 'normal';
               if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
@@ -620,48 +832,76 @@ function App() {
               else if (delta <= -3.0) quality = 'blunder';
               else if (delta <= -1.5) quality = 'miss';
               else if (delta <= -0.8) quality = 'mistake';
-              preEvalData[i].quality = quality;
+              mergedData[i].quality = quality;
               
-              const playerMoved = (i % 2 !== 0) ? 'w' : 'b';
-              const isUser = userColorRef.current === playerMoved;
-              const s = isUser ? statsRef.current : opponentStatsRef.current;
-              if (quality === 'brilliant') s.brilliant++;
-              else if (quality === 'great') s.great++;
-              else if (quality === 'best') s.best++;
-              else if (quality === 'mistake') s.mistake++;
-              else if (quality === 'miss') s.miss++;
-              else if (quality === 'blunder') s.blunder++;
+              if (quality !== 'normal') {
+                const playerMoved = (i % 2 !== 0) ? 'w' : 'b';
+                const isUser = userColor === playerMoved;
+                const target = isUser ? s : os;
+                if (quality === 'brilliant') target.brilliant++;
+                else if (quality === 'great') target.great++;
+                else if (quality === 'best') target.best++;
+                else if (quality === 'mistake') target.mistake++;
+                else if (quality === 'miss') target.miss++;
+                else if (quality === 'blunder') target.blunder++;
+              }
             }
 
-            graphDataRef.current = preEvalData;
-            originalGraphDataRef.current = [...preEvalData];
-            setGraphData([...preEvalData]);
-            // Clear local storage since backend result is now definitive
-            localStorage.removeItem(localKey);
-            isScanningRef.current = false;
-            scanQueueRef.current = [];
-            startMainAnalysis();
-          })
-          .catch((err) => {
-            clearTimeout(timeoutId);
-            console.log('[App] Pre-analysis fetch failed or timed out:', err.message);
-            setIsPreAnalyzed(false);
-            // Resume from local storage: only queue moves that aren't already analyzed
+            graphDataRef.current = mergedData;
+            originalGraphDataRef.current = [...mergedData];
+            setGraphData([...mergedData]);
+            statsRef.current = s;
+            opponentStatsRef.current = os;
+            setStats(s);
+            setOpponentStats(os);
+
             const missing = fens.map((f, i) => ({ fen: f, index: i }))
                                 .filter(t => !savedIndices.has(t.index) && t.index !== 0);
             
-            console.log(`[App] Queuing ${missing.length} moves for scan`);
-            scanQueueRef.current = missing;
-            isScanningRef.current = false;
-            processNextScan();
+            console.log(`[App] [DEBUG] After backend merge: missing count=${missing.length}`);
+            if (missing.length === 0) {
+              setCurrentlyAnalyzingGameId(null);
+              // Backend complete, so we can clear local storage
+              localStorage.removeItem(localKey);
+            } else {
+              setCurrentlyAnalyzingGameId(gameId);
+              scanQueueRef.current = missing;
+              isScanningRef.current = false;
+              processNextScan();
+            }
+            startMainAnalysis();
+          })
+          .catch((err) => {
+            if (currentGameIdRef.current !== gameId) return;
+            clearTimeout(timeoutId);
+            console.log('[App] [DEBUG] Pre-analysis fetch failed or timed out:', err.message);
+            setIsPreAnalyzed(false);
+            const missing = fens.map((f, i) => ({ fen: f, index: i }))
+                                .filter(t => !savedIndices.has(t.index) && t.index !== 0);
+            
+            console.log(`[App] [DEBUG] processPgn (catch): missing count=${missing.length}`);
+            if (missing.length === 0) {
+              setCurrentlyAnalyzingGameId(null);
+            } else {
+              setCurrentlyAnalyzingGameId(gameId);
+              scanQueueRef.current = missing;
+              isScanningRef.current = false;
+              processNextScan();
+            }
           });
       } else {
         setIsPreAnalyzed(false);
         const missing = fens.map((f, i) => ({ fen: f, index: i }))
                             .filter(t => !savedIndices.has(t.index) && t.index !== 0);
-        scanQueueRef.current = missing;
-        isScanningRef.current = false;
-        processNextScan();
+        console.log(`[App] [DEBUG] processPgn (no-url): missing count=${missing.length}`);
+        if (missing.length === 0) {
+          setCurrentlyAnalyzingGameId(null);
+        } else {
+          setCurrentlyAnalyzingGameId(gameId);
+          scanQueueRef.current = missing;
+          isScanningRef.current = false;
+          processNextScan();
+        }
       }
     } catch (e) { console.error(e); }
   };
@@ -725,17 +965,25 @@ function App() {
         if (data.chessComUsername) {
           setChessComUsername(data.chessComUsername);
           if (data.timezone) setTimezone(data.timezone);
-          fetchGames(data.chessComUsername, true);
-          fetchLocalGames();
+          fetchGames(data.chessComUsername, false);
+        } else {
+          // If no username in config, still try to fetch local games
+          fetchGames(chessComUsername, false);
         }
+        fetchLocalGames();
       })
-      .catch(e => console.error('Failed to fetch config', e));
+      .catch(e => {
+        console.error('Failed to fetch config', e);
+        // Fallback: try to fetch anyway
+        fetchGames(chessComUsername, false);
+        fetchLocalGames();
+      });
   }, []);
 
   const currentMoveQuality = graphData[currentIndex]?.quality;
   const getQualityLabel = (q: string | undefined) => {
     if (!q) return null;
-    const isUser = userColorRef.current === (currentIndex % 2 !== 0 ? 'w' : 'b');
+    const isUser = userColor === (currentIndex % 2 !== 0 ? 'w' : 'b');
     const colorLabel = (currentIndex % 2 !== 0) ? 'W' : 'B';
     const prefix = isUser ? '' : `(${colorLabel}) `;
     switch(q) {
@@ -789,7 +1037,7 @@ function App() {
     if (game.isThreefoldRepetition()) return 'Draw by Threefold Repetition';
     if (game.isInsufficientMaterial()) return 'Draw by Insufficient Material';
     if (game.isDraw()) return 'Draw';
-    
+
     if (currentIndex === allFens.length - 1 && pgnResult && pgnResult !== '*') {
       if (pgnResult === '1-0') return 'White wins';
       if (pgnResult === '0-1') return 'Black wins';
@@ -799,15 +1047,27 @@ function App() {
     return null;
   }, [fen, currentIndex, allFens.length, pgnResult]);
 
+  const currentGraphEval = useMemo(() => {
+    const point = graphData[currentIndex];
+    if (!point || !point.analyzed) return null;
+    const val = point.eval;
+    const sign = val > 0 ? '+' : (val < 0 ? '-' : '');
+    let label = `${sign}${Math.abs(val).toFixed(2)}`;
+    if (Math.abs(val) < 0.001) label = '0.00';
+    if (Math.abs(val) >= 9.9) label = val > 0 ? 'M+' : 'M-';
+    return label;
+  }, [graphData, currentIndex]);
+
+  const displayStats = stats;
+  const displayOpponentStats = opponentStats;
+
   return (
-    <div className="container">
-      <header><h1>Chess Analysis Tool</h1></header>
+    <div className="container">      <header><h1>Chess Analysis Tool</h1></header>
       <main className="main-content">
         <div className="board-section">
           <div className="board-container">
-            <EvaluationBar evaluation={evaluation} />
-            <div className="board-wrapper" onContextMenu={(e) => e.preventDefault()}>
-              <Chessboard position={fen} boardOrientation={boardOrientation}
+          <EvaluationBar evaluation={evaluation} userColor={userColor} />
+          <div className="board-wrapper" onContextMenu={(e) => e.preventDefault()}>              <Chessboard position={fen} boardOrientation={boardOrientation}
                 onPieceDrop={(s, t) => {
                   const game = new Chess(fen);
                   try {
@@ -928,8 +1188,8 @@ function App() {
                   </span>
                 )}
               </div>
-              <div className="stat-value highlight">
-                {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
+              <div className={`stat-value highlight ${getEvalColorClass(evaluation, userColor)}`}>
+                {evaluation || '0.00'}
               </div>
             </div>
             <div className="stat-sub">
@@ -942,33 +1202,47 @@ function App() {
                 {wsStatus === 'open' ? '● Connected' : wsStatus === 'connecting' ? '○ Connecting...' : '○ Disconnected (Retrying)'}
               </div>
             </div>
-            {currentStatus && (
-              <div className="status-badge-inline">
-                {currentStatus}
-              </div>
-            )}
-          </div>
+            </div>
 
-          <div className="graph-container">
-            <div className="graph-header">
+            <div className="graph-container">            <div className="graph-header">
               <div className="graph-title-group">
                 <h3>Evaluation Graph</h3>
-                {isScanning !== false && (
-                  <span className="scanning-badge">
-                    <span className="scanning-dot"></span>
-                    Scanning... ({scanQueueLength} left)
+              </div>
+              <div className="graph-header-right">
+                <span className={`graph-eval-indicator-external ${getEvalColorClass(graphHoverEval || currentGraphEval, userColor)}`}>
+                  {graphHoverEval || currentGraphEval || '-.--'}
+                </span>
+                <span className="graph-move-indicator-external">
+                  {(graphHoverIdx !== null ? graphHoverIdx : currentIndex)} / {allFens.length - 1}
+                </span>                {isPreAnalyzed && (
+                  <span className={`pre-analyzed-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
+                    {isPreAnalyzed >= 30 ? 'Deep Analysis' : 'Pre-Analyzed'} (Depth {isPreAnalyzed})
                   </span>
                 )}
               </div>
-              {isPreAnalyzed && (
-                <span className={`pre-analyzed-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
-                  {isPreAnalyzed >= 30 ? 'Deep Analysis' : 'Pre-Analyzed'} (Depth {isPreAnalyzed})
+              </div>
+              <div style={{ height: '100px', width: '310px' }}>
+              <EvaluationGraphView 
+                data={graphData} 
+                currentIndex={currentIndex} 
+                onJump={onJump} 
+                boardOrientation={boardOrientation} 
+                branchingPoint={branchingPoint} 
+                isPreAnalyzed={isPreAnalyzed} 
+                showOverlay={showGraphOverlay}
+                userColor={userColor}
+                onHover={(idx: number | null, evalStr: string | null) => {
+                  setGraphHoverIdx(idx);
+                  setGraphHoverEval(evalStr);
+                }}
+              />            </div>            {isScanning !== false && (
+              <div className="scanning-status-under">
+                <span className="scanning-badge">
+                  <span className="scanning-dot"></span>
+                  Scanning... ({scanQueueLength} left)
                 </span>
-              )}
-            </div>
-            <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} branchingPoint={branchingPoint} isPreAnalyzed={isPreAnalyzed} />
-            </div>
+              </div>
+            )}
             <div className="quality-indicator-wrapper">
               {qualityInfo && (
                 <div className={`move-quality-box ${currentMoveQuality}`}>
@@ -982,21 +1256,21 @@ function App() {
             <div className="review-grid">
               <div className="review-col">
                 <h4 className="user">YOU</h4>
-                <div className="stat-row"><span className="badge brilliant">!!</span> {stats.brilliant}</div>
-                <div className="stat-row"><span className="badge great">!</span> {stats.great}</div>
-                <div className="stat-row"><span className="badge best">★</span> {stats.best}</div>
-                <div className="stat-row"><span className="badge mistake">?</span> {stats.mistake}</div>
-                <div className="stat-row"><span className="badge miss">X</span> {stats.miss}</div>
-                <div className="stat-row"><span className="badge blunder">??</span> {stats.blunder}</div>
+                <div className="stat-row"><span className="badge brilliant">!!</span> {displayStats.brilliant}</div>
+                <div className="stat-row"><span className="badge great">!</span> {displayStats.great}</div>
+                <div className="stat-row"><span className="badge best">★</span> {displayStats.best}</div>
+                <div className="stat-row"><span className="badge mistake">?</span> {displayStats.mistake}</div>
+                <div className="stat-row"><span className="badge miss">X</span> {displayStats.miss}</div>
+                <div className="stat-row"><span className="badge blunder">??</span> {displayStats.blunder}</div>
               </div>
               <div className="review-col">
                 <h4 className="opponent">OPPONENT</h4>
-                <div className="stat-row"><span className="badge brilliant">!!</span> {opponentStats.brilliant}</div>
-                <div className="stat-row"><span className="badge great">!</span> {opponentStats.great}</div>
-                <div className="stat-row"><span className="badge best">★</span> {opponentStats.best}</div>
-                <div className="stat-row"><span className="badge mistake">?</span> {opponentStats.mistake}</div>
-                <div className="stat-row"><span className="badge miss">X</span> {opponentStats.miss}</div>
-                <div className="stat-row"><span className="badge blunder">??</span> {opponentStats.blunder}</div>
+                <div className="stat-row"><span className="badge brilliant">!!</span> {displayOpponentStats.brilliant}</div>
+                <div className="stat-row"><span className="badge great">!</span> {displayOpponentStats.great}</div>
+                <div className="stat-row"><span className="badge best">★</span> {displayOpponentStats.best}</div>
+                <div className="stat-row"><span className="badge mistake">?</span> {displayOpponentStats.mistake}</div>
+                <div className="stat-row"><span className="badge miss">X</span> {displayOpponentStats.miss}</div>
+                <div className="stat-row"><span className="badge blunder">??</span> {displayOpponentStats.blunder}</div>
               </div>
             </div>
           </div>
@@ -1013,14 +1287,24 @@ function App() {
             <table>
               <thead><tr><th>#</th><th>Move</th><th>Score</th></tr></thead>
               <tbody>
-                {filteredCandidates.map((c: any) => (
-                  <tr key={c.rank} onClick={() => goToMove(currentIndex + 1)} style={{cursor: 'pointer'}}>
-                    <td>{c.rank}</td><td><strong>{c.move}</strong></td><td>{c.score}</td>
-                  </tr>
-                ))}
+                {[1, 2, 3].map((rank) => {
+                  const c = filteredCandidates.find((cand: any) => cand.rank === rank);
+                  if (c) {
+                    return (
+                      <tr key={rank} onClick={() => goToMove(currentIndex + 1)} style={{cursor: 'pointer'}}>
+                        <td>{rank}</td><td><strong>{c.move}</strong></td><td>{c.score}</td>
+                      </tr>
+                    );
+                  } else {
+                    return (
+                      <tr key={rank} className="empty-row">
+                        <td>{rank}</td><td>-</td><td>-</td>
+                      </tr>
+                    );
+                  }
+                })}
               </tbody>
-            </table>
-          </div>
+            </table>          </div>
           <div className="chess-com-import">
             <h3>Chess.com Import ({chessComUsername})</h3>
             <div className="import-legend">
@@ -1033,19 +1317,20 @@ function App() {
                 const gameId = g.url.split('/').pop();
                 const isBackendAnalyzed = analyzedGameIds.includes(gameId);
                 const isAnalyzing = currentlyAnalyzingGameId === gameId;
-                const isLocalAnalyzed = (() => {
+                const localAnalysis = (() => {
                   const saved = localStorage.getItem(`analysis_${gameId}`);
-                  if (!saved) return false;
-                  try {
-                    const parsed = JSON.parse(saved);
-                    return parsed.completed || (parsed.evaluations && parsed.evaluations.length > 10);
-                  } catch(e) { return false; }
+                  if (!saved) return null;
+                  try { return JSON.parse(saved); } catch(e) { return null; }
                 })();
                 
+                const isLocalComplete = localAnalysis?.completed === true;
+                const isLocalIncomplete = !isLocalComplete && localAnalysis?.evaluations?.length > 0;
+
                 let statusClass = '';
                 if (isBackendAnalyzed) statusClass = 'backend';
                 else if (isAnalyzing) statusClass = 'analyzing-local';
-                else if (isLocalAnalyzed) statusClass = 'local';
+                else if (isLocalComplete) statusClass = 'local';
+                else if (isLocalIncomplete) statusClass = 'incomplete';
 
                 const isSelected = selectedGameId === gameId;
 
@@ -1060,8 +1345,15 @@ function App() {
                     {statusClass && (
                       <span 
                         className={`analyzed-status-dot ${statusClass}`} 
-                        title={statusClass === 'backend' ? 'Server Analysis Available' : statusClass === 'analyzing-local' ? 'Analyzing (Local)...' : 'Local Analysis Available'}
-                      >●</span>
+                        title={
+                          statusClass === 'backend' ? 'Server Analysis Available' : 
+                          statusClass === 'analyzing-local' ? 'Analyzing (Local)...' : 
+                          statusClass === 'local' ? 'Local Analysis Available' :
+                          'Incomplete Local Analysis'
+                        }
+                      >
+                        {statusClass === 'incomplete' ? '▲' : '●'}
+                      </span>
                     )}
                   </div>
                 );
@@ -1077,19 +1369,20 @@ function App() {
                   const gameId = g.id;
                   const isBackendAnalyzed = analyzedGameIds.includes(gameId);
                   const isAnalyzing = currentlyAnalyzingGameId === gameId;
-                  const isLocalAnalyzed = (() => {
+                  const localAnalysis = (() => {
                     const saved = localStorage.getItem(`analysis_${gameId}`);
-                    if (!saved) return false;
-                    try {
-                      const parsed = JSON.parse(saved);
-                      return parsed.completed || (parsed.evaluations && parsed.evaluations.length > 10);
-                    } catch(e) { return false; }
+                    if (!saved) return null;
+                    try { return JSON.parse(saved); } catch(e) { return null; }
                   })();
                   
+                  const isLocalComplete = localAnalysis?.completed === true;
+                  const isLocalIncomplete = !isLocalComplete && localAnalysis?.evaluations?.length > 0;
+
                   let statusClass = '';
                   if (isBackendAnalyzed) statusClass = 'backend';
                   else if (isAnalyzing) statusClass = 'analyzing-local';
-                  else if (isLocalAnalyzed) statusClass = 'local';
+                  else if (isLocalComplete) statusClass = 'local';
+                  else if (isLocalIncomplete) statusClass = 'incomplete';
 
                   const isSelected = selectedGameId === gameId;
 
@@ -1099,11 +1392,28 @@ function App() {
                         {g.white} vs {g.black} ({g.result})
                         <div className="game-date">{formatPgnDate(g.date, g.time, timezone)}</div>
                       </div>
-                      <span className={`analyzed-status-dot ${statusClass || 'local'}`}>●</span>
+                      {statusClass && (
+                        <span 
+                          className={`analyzed-status-dot ${statusClass}`} 
+                          title={
+                            statusClass === 'backend' ? 'Server Analysis Available' : 
+                            statusClass === 'analyzing-local' ? 'Analyzing (Local)...' : 
+                            statusClass === 'local' ? 'Local Analysis Available' :
+                            'Incomplete Local Analysis'
+                          }
+                        >
+                          {statusClass === 'incomplete' ? '▲' : '●'}
+                        </span>
+                      )}
                     </div>
                   );
                 })
               }
+            </div>
+            <div style={{ marginTop: '20px', borderTop: '1px solid #444', paddingTop: '15px' }}>
+              <button onClick={clearLocalCache} className="btn-clear-cache" style={{ width: '100%', backgroundColor: '#555' }}>
+                Clear Browser Analysis Cache
+              </button>
             </div>
           </div>
         </div>

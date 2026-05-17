@@ -1,5 +1,6 @@
 services:
   backend:
+    user: "1000:1000"
     build: ./backend
     ports:
       - "5000:5000"
@@ -16,6 +17,7 @@ services:
       - frontend
 
   analysis-bot:
+    user: "1000:1000"
     build:
       context: ./backend
       dockerfile: Dockerfile.analysis-bot
