@@ -1,6 +1,6 @@
-# GaffBuster ♟️ (v2.1)
+# GaffBuster ♟️ (v2.1.1)
 
-GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. Version 2.1 introduces a parallel analysis architecture, enhanced research capabilities, and seamless connectivity.
+GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. Version 2.1.1 introduces a parallel analysis architecture, enhanced research capabilities, and seamless connectivity.
 
 ## Key Features
 
