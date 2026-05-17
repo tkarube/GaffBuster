@@ -3,7 +3,9 @@
 help:
 	@echo "Usage:"
 	@echo "  make setup    - Setup configuration files and SSL certificates"
+	@echo "  make add-user - Add or update a user (Usage: make add-user user=NAME pass=PASS)"
 	@echo "  make build    - Build Docker images"
+
 	@echo "  make up       - Start the application in Docker"
 	@echo "  make stop     - Stop the application containers"
 	@echo "  make down     - Stop and remove containers"

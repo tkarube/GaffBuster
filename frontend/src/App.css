@@ -425,6 +425,25 @@ header h1 {
   align-items: center;
 }
 
+.stat-info-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pre-analyzed-badge-inline {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #fff;
+  font-weight: bold;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
+.pre-analyzed-badge-inline.deep { background-color: #9c27b0; }
+.pre-analyzed-badge-inline.regular { background-color: #5c8d4d; }
+
 .stat-main .stat-label {
   font-size: 0.85rem;
   color: #888;
@@ -506,13 +525,77 @@ header h1 {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 5px;
+  margin-bottom: 8px;
+}
+
+.graph-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scanning-badge {
+  font-size: 0.65rem;
+  background-color: rgba(76, 175, 80, 0.15);
+  color: #4caf50;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: bold;
+}
+
+.scanning-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #4caf50;
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.2; }
 }
 
 .graph-container h3 {
+
   margin: 0;
   font-size: 0.9rem;
   color: var(--accent-color);
+}
+
+.custom-graph-tooltip {
+  background-color: rgba(34, 34, 34, 0.95);
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 8px;
+  font-family: monospace;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+}
+
+.tooltip-move {
+  font-weight: bold;
+  color: #888;
+  font-size: 0.75rem;
+  margin-bottom: 2px;
+}
+
+.tooltip-eval {
+  color: var(--accent-color);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.tooltip-depth {
+  font-size: 0.65rem;
+  color: #aaa;
+  margin-top: 4px;
+  border-top: 1px solid #333;
+  padding-top: 4px;
 }
 
 .current-eval-badge {
@@ -629,19 +712,47 @@ header h1 {
   cursor: pointer;
 }
 
+.game-item.active {
+  background-color: rgba(76, 175, 80, 0.15) !important;
+  border-right: 3px solid var(--accent-color);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+}
+
+.game-item.active .game-item-info {
+  font-weight: bold;
+  color: #fff;
+}
+
 .game-item:hover {
   background-color: #333;
 }
 
-.game-item.analyzed {
-  border-left: 3px solid #5c8d4d;
+.game-item.analyzing-local {
+  border-left: 3px solid #ffa726;
+  background-color: rgba(255, 167, 38, 0.05);
+}
+
+.analyzed-status-dot.analyzing-local {
+  color: #ffa726;
+  animation: blink 1s infinite;
+}
+
+.game-item.local {
+  border-left: 3px solid #ffa726;
 }
 
 .analyzed-status-dot {
-  color: #5c8d4d;
   font-size: 1.2rem;
   line-height: 1;
   margin-left: 8px;
+}
+
+.analyzed-status-dot.backend {
+  color: #5c8d4d; /* Green */
+}
+
+.analyzed-status-dot.local {
+  color: #ffa726; /* Orange/Amber */
 }
 
 .game-item-info {

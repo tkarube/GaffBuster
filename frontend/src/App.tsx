@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, ReferenceLine, Tooltip } from 'recharts';
 import './App.css';
 
 // --- Types ---
@@ -12,6 +12,23 @@ interface GraphPoint {
 }
 
 // --- Sub-Components ---
+
+const CustomTooltip = ({ active, payload, isPreAnalyzed, branchingPoint }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    const isActuallyPreAnalyzed = isPreAnalyzed && (branchingPoint === null || data.move <= branchingPoint);
+    return (
+      <div className="custom-graph-tooltip">
+        <div className="tooltip-move">Move {data.move}</div>
+        <div className="tooltip-eval">Eval: {data.eval > 0 ? `+${data.eval}` : data.eval}</div>
+        {isActuallyPreAnalyzed && (
+          <div className="tooltip-depth">Depth {isPreAnalyzed} (Pre-Analyzed)</div>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
 
 const EvaluationBar = memo(({ evaluation }: { evaluation: string | null }) => {
   const getEvalPercentage = () => {
@@ -47,11 +64,11 @@ const CustomDot = (props: any) => {
   return <circle cx={cx} cy={cy} r={radius} fill={color} stroke="none" />;
 };
 
-const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint }: any) => {
+const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint, isPreAnalyzed }: any) => {
   if (data.length === 0) {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
-  
+
   // Flip evaluation if orientation is black (black is at bottom)
   const orientedData = data.map((d: any) => ({
     ...d,
@@ -60,13 +77,14 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={orientedData} 
+      <LineChart data={orientedData}
         onClick={(d) => d && d.activeTooltipIndex !== undefined && onJump(d.activeTooltipIndex, true)}
         margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
       >
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" />
         <XAxis dataKey="move" hide />
         <YAxis domain={[-10, 10]} hide />
+        <Tooltip content={<CustomTooltip isPreAnalyzed={isPreAnalyzed} branchingPoint={branchingPoint} />} />
         <ReferenceLine y={0} stroke="#666" />
         {branchingPoint !== null && (
           <ReferenceLine x={branchingPoint} stroke="#ff9800" strokeWidth={2} strokeDasharray="5 5" label={{ value: 'Branch', position: 'top', fill: '#ff9800', fontSize: 10 }} />
@@ -77,7 +95,6 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
     </ResponsiveContainer>
   );
 });
-
 const formatPgnDate = (date: string, time: string, tz: string) => {
   if (!date) return '';
   const cleanDate = date.replace(/\./g, '-'); // YYYY.MM.DD -> YYYY-MM-DD
@@ -106,6 +123,10 @@ function App() {
   const [analysisDepth, setAnalysisDepth] = useState<number>(30);
   const [isPreAnalyzed, setIsPreAnalyzed] = useState<number | false>(false);
   const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
+  const [currentlyAnalyzingGameId, setCurrentlyAnalyzingGameId] = useState<string | null>(null);
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState<number | false>(false);
+  const [scanQueueLength, setScanQueueLength] = useState(0);
   const [localGames, setLocalGames] = useState<any[]>([]);
   const [loadingLocal, setLoadingLocal] = useState(false);
   const [branchingPoint, setBranchingPoint] = useState<number | null>(null);
@@ -146,15 +167,19 @@ function App() {
 
   const processNextScan = useCallback(() => {
     if (isScanningRef.current !== false || scanQueueRef.current.length === 0) {
+      setIsScanning(isScanningRef.current);
+      setScanQueueLength(scanQueueRef.current.length);
       return;
     }
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      setTimeout(processNextScan, 500);
+      setTimeout(() => processNextScan(), 500);
       return;
     }
     const next = scanQueueRef.current.shift();
     if (next) {
       isScanningRef.current = next.index;
+      setIsScanning(next.index);
+      setScanQueueLength(scanQueueRef.current.length);
       currentMoveQualityRef.current = null;
       socketRef.current.send(JSON.stringify({ type: 'scan_position', fen: next.fen, index: next.index }));
 
@@ -163,6 +188,7 @@ function App() {
       scanTimeoutRef.current = setTimeout(() => {
         console.log(`[App] Scan watchdog triggered for move ${next.index}. Resetting...`);
         isScanningRef.current = false;
+        setIsScanning(false);
         processNextScan();
       }, 10000);
     }
@@ -217,6 +243,7 @@ function App() {
     if (scanQueueRef.current.length === 0 && graphDataRef.current.length === 0 && isScanningRef.current === false) {
       graphDataRef.current = [{ move: 0, eval: 0, quality: 'normal' }];
       scanQueueRef.current.push({ fen: allFens[0], index: 0 });
+      setScanQueueLength(scanQueueRef.current.length);
       processNextScan();
     }
   }, [allFens, processNextScan]);
@@ -290,11 +317,25 @@ function App() {
               else if (q === 'blunder') s.blunder++;
             }
             isScanningRef.current = false;
+            setIsScanning(false);
+            setScanQueueLength(scanQueueRef.current.length);
             if (scanQueueRef.current.length > 0) {
               console.log(`[App] Queue has ${scanQueueRef.current.length} moves left. Continuing...`);
-              setTimeout(processNextScan, 0); // Immediate next scan
+              setTimeout(() => processNextScan(), 0); // Immediate next scan
             } else {
               console.log('[App] Scan queue empty. Starting main analysis.');
+              setCurrentlyAnalyzingGameId(null);
+              if (currentGameIdRef.current) {
+                const localKey = `analysis_${currentGameIdRef.current}`;
+                const saved = localStorage.getItem(localKey);
+                if (saved) {
+                  try {
+                    const parsed = JSON.parse(saved);
+                    parsed.completed = true;
+                    localStorage.setItem(localKey, JSON.stringify(parsed));
+                  } catch(e) {}
+                }
+              }
               startMainAnalysis();
             }
             return;
@@ -518,6 +559,8 @@ function App() {
       const gameUrl = tempGame.header().Link || '';
       const gameId = gameUrl.split('/').pop() || `temp_${Date.now()}`;
       currentGameIdRef.current = gameId;
+      setCurrentlyAnalyzingGameId(gameId);
+      setSelectedGameId(gameId);
 
       const initialGraph = fens.map((_, i) => ({ move: i, eval: 0, quality: 'normal' as any }));
       graphDataRef.current = initialGraph;
@@ -623,7 +666,7 @@ function App() {
     } catch (e) { console.error(e); }
   };
 
-  const fetchGames = async (usernameOverride?: string) => {
+  const fetchGames = async (usernameOverride?: string, autoLoad = false) => {
     setLoadingGames(true);
     const targetUsername = usernameOverride || chessComUsername;
     try {
@@ -641,7 +684,18 @@ function App() {
       const latest = archivesData.archives[archivesData.archives.length - 1];
       const gRes = await fetch(latest);
       const gData = await gRes.json();
-      setChessComGames(gData.games.reverse().slice(0, 10));
+      
+      // Filter for finished games only: 
+      // Chess.com games in archives are usually finished, but we check for 'pgn' 
+      // and ensure the game isn't explicitly marked as ongoing.
+      const finishedGames = gData.games.filter((g: any) => g.pgn && g.end_time).reverse();
+      
+      setChessComGames(finishedGames.slice(0, 10));
+      
+      // Auto-load latest finished game if requested and available
+      if (autoLoad && finishedGames.length > 0) {
+        processPgn(finishedGames[0].pgn);
+      }
     } catch (e) {
       console.error('Failed to fetch games', e);
     }
@@ -671,7 +725,7 @@ function App() {
         if (data.chessComUsername) {
           setChessComUsername(data.chessComUsername);
           if (data.timezone) setTimezone(data.timezone);
-          fetchGames(data.chessComUsername);
+          fetchGames(data.chessComUsername, true);
           fetchLocalGames();
         }
       })
@@ -760,7 +814,7 @@ function App() {
                     const move = game.move({ from: s, to: t, promotion: 'q' });
                     if (move) {
                       const newFen = game.fen();
-                      
+
                       const newAllFens = [...allFens.slice(0, currentIndex + 1), newFen];
                       const newMoveHistory = [...moveHistory.slice(0, currentIndex), move.san];
                       const newLastMoveSquares = [...lastMoveSquares.slice(0, currentIndex + 1), { from: s, to: t }];
@@ -769,7 +823,7 @@ function App() {
                       allFensRef.current = newAllFens;
                       setMoveHistory(newMoveHistory);
                       setLastMoveSquares(newLastMoveSquares);
-                      
+
                       const newIndex = currentIndex + 1;
                       setCurrentIndex(newIndex);
                       setFen(newFen);
@@ -781,8 +835,9 @@ function App() {
                       const updatedGraph: GraphPoint[] = [...graphDataRef.current.slice(0, newIndex), newPoint];
                       graphDataRef.current = updatedGraph;
                       setGraphData(updatedGraph);
-                      
+
                       scanQueueRef.current.push({ fen: newFen, index: newIndex });
+                      setScanQueueLength(scanQueueRef.current.length);
                       processNextScan();
 
                       return true;
@@ -792,9 +847,8 @@ function App() {
                   }
                   return false;
                 }}
-                onSquareClick={() => goToMove(currentIndex + 1)}
-                onSquareRightClick={() => goToMove(currentIndex - 1)}
                 animationDuration={300}
+
                 customArrows={filteredCandidates.map((c: any, i: number) => [c.move.substring(0, 2), c.move.substring(2, 4), ['rgba(0, 255, 0, 0.8)', 'rgba(255, 255, 0, 0.6)', 'rgba(255, 165, 0, 0.4)'][i]])}
                 customSquareStyles={{
                   ...(lastMoveSquares[currentIndex] ? {
@@ -866,7 +920,14 @@ function App() {
         <div className="sidebar">
           <div className="live-stats-panel">
             <div className="stat-main">
-              <span className="stat-label">Evaluation</span>
+              <div className="stat-info-group">
+                <span className="stat-label">Evaluation</span>
+                {isPreAnalyzed && (branchingPoint === null || currentIndex <= branchingPoint) && (
+                  <span className={`pre-analyzed-badge-inline ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
+                    Pre-Analyzed (Depth {isPreAnalyzed})
+                  </span>
+                )}
+              </div>
               <div className="stat-value highlight">
                 {evaluation ? (evaluation.startsWith('M') ? evaluation : (parseFloat(evaluation) > 0 ? `+${evaluation}` : evaluation)) : '0.00'}
               </div>
@@ -890,7 +951,15 @@ function App() {
 
           <div className="graph-container">
             <div className="graph-header">
-              <h3>Evaluation Graph</h3>
+              <div className="graph-title-group">
+                <h3>Evaluation Graph</h3>
+                {isScanning !== false && (
+                  <span className="scanning-badge">
+                    <span className="scanning-dot"></span>
+                    Scanning... ({scanQueueLength} left)
+                  </span>
+                )}
+              </div>
               {isPreAnalyzed && (
                 <span className={`pre-analyzed-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
                   {isPreAnalyzed >= 30 ? 'Deep Analysis' : 'Pre-Analyzed'} (Depth {isPreAnalyzed})
@@ -898,7 +967,7 @@ function App() {
               )}
             </div>
             <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} branchingPoint={branchingPoint} />
+              <EvaluationGraphView data={graphData} currentIndex={currentIndex} onJump={(idx: number) => goToMove(idx, true)} boardOrientation={boardOrientation} branchingPoint={branchingPoint} isPreAnalyzed={isPreAnalyzed} />
             </div>
             <div className="quality-indicator-wrapper">
               {qualityInfo && (
@@ -955,22 +1024,45 @@ function App() {
           <div className="chess-com-import">
             <h3>Chess.com Import ({chessComUsername})</h3>
             <div className="import-legend">
-              <span className="analyzed-status-dot">●</span> Deep Analysis Available
+              <span className="analyzed-status-dot backend">●</span> Server Analysis
+              <span className="analyzed-status-dot local" style={{ marginLeft: '10px' }}>●</span> Local Analysis
             </div>
             <button onClick={() => fetchGames()} disabled={loadingGames}>{loadingGames ? '...' : 'Fetch Recent Games'}</button>
             <div className="games-list">
               {chessComGames.map((g, i) => {
                 const gameId = g.url.split('/').pop();
-                const isAnalyzed = analyzedGameIds.includes(gameId);
+                const isBackendAnalyzed = analyzedGameIds.includes(gameId);
+                const isAnalyzing = currentlyAnalyzingGameId === gameId;
+                const isLocalAnalyzed = (() => {
+                  const saved = localStorage.getItem(`analysis_${gameId}`);
+                  if (!saved) return false;
+                  try {
+                    const parsed = JSON.parse(saved);
+                    return parsed.completed || (parsed.evaluations && parsed.evaluations.length > 10);
+                  } catch(e) { return false; }
+                })();
+                
+                let statusClass = '';
+                if (isBackendAnalyzed) statusClass = 'backend';
+                else if (isAnalyzing) statusClass = 'analyzing-local';
+                else if (isLocalAnalyzed) statusClass = 'local';
+
+                const isSelected = selectedGameId === gameId;
+
                 return (
-                  <div key={i} className={`game-item ${isAnalyzed ? 'analyzed' : ''}`} onClick={() => processPgn(g.pgn)}>
+                  <div key={i} className={`game-item ${statusClass} ${isSelected ? 'active' : ''}`} onClick={() => processPgn(g.pgn)}>
                     <div className="game-item-info">
                       {g.white.username} vs {g.black.username}
                       <div className="game-date">
                         {new Date(g.end_time * 1000).toLocaleString('en-US', { timeZone: timezone })}
                       </div>
                     </div>
-                    {isAnalyzed && <span className="analyzed-status-dot" title="Deep Analysis Available">●</span>}
+                    {statusClass && (
+                      <span 
+                        className={`analyzed-status-dot ${statusClass}`} 
+                        title={statusClass === 'backend' ? 'Server Analysis Available' : statusClass === 'analyzing-local' ? 'Analyzing (Local)...' : 'Local Analysis Available'}
+                      >●</span>
+                    )}
                   </div>
                 );
               })}
@@ -981,15 +1073,36 @@ function App() {
             <button onClick={fetchLocalGames} disabled={loadingLocal}>{loadingLocal ? '...' : 'Refresh Local Games'}</button>
             <div className="games-list">
               {localGames.length === 0 ? <div className="no-games">No local games found</div> : 
-                localGames.map((g, i) => (
-                  <div key={i} className="game-item analyzed" onClick={() => processPgn(g.pgn)}>
-                    <div className="game-item-info">
-                      {g.white} vs {g.black} ({g.result})
-                      <div className="game-date">{formatPgnDate(g.date, g.time, timezone)}</div>
+                localGames.map((g, i) => {
+                  const gameId = g.id;
+                  const isBackendAnalyzed = analyzedGameIds.includes(gameId);
+                  const isAnalyzing = currentlyAnalyzingGameId === gameId;
+                  const isLocalAnalyzed = (() => {
+                    const saved = localStorage.getItem(`analysis_${gameId}`);
+                    if (!saved) return false;
+                    try {
+                      const parsed = JSON.parse(saved);
+                      return parsed.completed || (parsed.evaluations && parsed.evaluations.length > 10);
+                    } catch(e) { return false; }
+                  })();
+                  
+                  let statusClass = '';
+                  if (isBackendAnalyzed) statusClass = 'backend';
+                  else if (isAnalyzing) statusClass = 'analyzing-local';
+                  else if (isLocalAnalyzed) statusClass = 'local';
+
+                  const isSelected = selectedGameId === gameId;
+
+                  return (
+                    <div key={i} className={`game-item ${statusClass} ${isSelected ? 'active' : ''}`} onClick={() => processPgn(g.pgn)}>
+                      <div className="game-item-info">
+                        {g.white} vs {g.black} ({g.result})
+                        <div className="game-date">{formatPgnDate(g.date, g.time, timezone)}</div>
+                      </div>
+                      <span className={`analyzed-status-dot ${statusClass || 'local'}`}>●</span>
                     </div>
-                    <span className="analyzed-status-dot">●</span>
-                  </div>
-                ))
+                  );
+                })
               }
             </div>
           </div>

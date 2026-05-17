@@ -230,15 +230,16 @@ wss.on('connection', (ws) => {
                 const totalThreads = config.threads || totalCores || 1;
                 const totalHash = config.hash || 128;
                 
-                // Give all threads to both engines as requested (OS will handle contention)
-                const scanThreads = totalThreads;
-                const mainThreads = totalThreads;
+                // Optimized allocation: 75% for Main (Interactive), 25% for Scan (Graph)
+                // This prevents extreme contention while keeping both responsive.
+                const mainThreads = Math.max(1, Math.floor(totalThreads * 0.75));
+                const scanThreads = Math.max(1, totalThreads - mainThreads);
                 
                 // Balance hash: give 25% to scan, 75% to main (min 32MB each)
-                const scanHash = Math.max(32, Math.floor(totalHash * 0.25));
-                const mainHash = Math.max(32, totalHash - scanHash);
+                const mainHash = Math.max(32, Math.floor(totalHash * 0.75));
+                const scanHash = Math.max(32, totalHash - mainHash);
 
-                console.log(`[Backend] UCI Setup - All threads (${totalThreads}) allocated to both engines`);
+                console.log(`[Backend] UCI Setup - Main: ${mainThreads}T/${mainHash}MB, Scan: ${scanThreads}T/${scanHash}MB (Total: ${totalThreads}T)`);
 
                 const initEngine = (engine, threads, hash, multipv) => {
                     engine.stdin.write('uci\n');
