@@ -1228,48 +1228,51 @@ function App() {
             </div>
             </div>
 
-            <div className="graph-container">            <div className="graph-header">
-               <div className="graph-title-group">
-                 <h3>Evaluation Graph</h3>
-               </div>
-               <div className="graph-header-right">
-                 <span className={`graph-eval-indicator-external ${getEvalColorClass(graphHoverEval || currentGraphEval, userColor)}`}>
-                   {graphHoverEval || currentGraphEval || '-.--'}
-                 </span>
-                 <span className="graph-move-indicator-external">
-                   {(graphHoverIdx !== null ? graphHoverIdx : currentIndex)} / {allFens.length - 1}
-                 </span>
-               </div>
+            <div className="graph-container">
+              <div className="graph-header">
+                <div className="graph-title-group">
+                  <h3>Evaluation Graph</h3>
+                </div>
+                <div className="graph-header-right">
+                  <span className={`graph-eval-indicator-external ${getEvalColorClass(graphHoverEval || currentGraphEval, userColor)}`}>
+                    {graphHoverEval || currentGraphEval || '-.--'}
+                  </span>
+                  <span className="graph-move-indicator-external">
+                    {(graphHoverIdx !== null ? graphHoverIdx : currentIndex)} / {allFens.length - 1}
+                  </span>
+                </div>
               </div>
               <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView
-                data={chartData}
-                currentIndex={currentIndex}
-                onJump={onJump} 
-                boardOrientation={boardOrientation} 
-                branchingPoint={branchingPoint} 
-                isPreAnalyzed={isPreAnalyzed} 
-                showOverlay={showGraphOverlay}
-                userColor={userColor}
-                onHover={(idx: number | null, evalStr: string | null) => {
-                  setGraphHoverIdx(idx);
-                  setGraphHoverEval(evalStr);
-                }}
-              />            </div>
-            {isScanning !== false ? (
-              <div className="scanning-status-under">
-                <span className="scanning-badge">
-                  <span className="scanning-dot"></span>
-                  Scanning... ({scanQueueLength} left)
-                </span>
+                <EvaluationGraphView
+                  data={chartData}
+                  currentIndex={currentIndex}
+                  onJump={onJump} 
+                  boardOrientation={boardOrientation} 
+                  branchingPoint={branchingPoint} 
+                  isPreAnalyzed={isPreAnalyzed} 
+                  showOverlay={showGraphOverlay}
+                  userColor={userColor}
+                  onHover={(idx: number | null, evalStr: string | null) => {
+                    setGraphHoverIdx(idx);
+                    setGraphHoverEval(evalStr);
+                  }}
+                />
               </div>
-            ) : isPreAnalyzed && (
-              <div className="scanning-status-under">
-                <span className={`scanning-badge ${isPreAnalyzed >= 30 ? 'deep' : ''}`} style={{ borderColor: isPreAnalyzed >= 30 ? '#9c27b0' : '', color: isPreAnalyzed >= 30 ? '#ce93d8' : '' }}>
-                  {isPreAnalyzed >= 30 ? 'Deep Analysis Complete' : 'Analysis Complete'} (Depth {isPreAnalyzed})
-                </span>
-              </div>
-            )}
+              {isScanning !== false ? (
+                <div className="scanning-status-under">
+                  <span className="scanning-badge">
+                    <span className="scanning-dot"></span>
+                    Scanning... ({scanQueueLength} left)
+                  </span>
+                </div>
+              ) : isPreAnalyzed && (
+                <div className="scanning-status-under">
+                  <span className={`scanning-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
+                    Pre-Analyzed (Depth {isPreAnalyzed})
+                  </span>
+                </div>
+              )}
+            </div>
             <div className="quality-indicator-wrapper">
               {qualityInfo && (
                 <div className={`move-quality-box ${currentMoveQuality}`}>
