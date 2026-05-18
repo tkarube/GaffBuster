@@ -30,6 +30,7 @@ build:
 	docker compose build
 
 up:
+	@mkdir -p backend/results backend/pgns
 	docker compose up -d
 
 stop:
@@ -39,6 +40,7 @@ down:
 	docker compose down
 
 restart:
+	@mkdir -p backend/results backend/pgns
 	docker compose restart
 
 add-user:

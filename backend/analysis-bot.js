@@ -292,40 +292,55 @@ async function analyzeGame(game, config) {
     }
 
     const pool = new WorkerPool(config);
-    await pool.init();
+    try {
+        await pool.init();
 
-    const tasks = [];
-    for (let i = evaluations.length; i < fens.length; i++) {
-        tasks.push({ moveIndex: i, fen: fens[i], depth });
-    }
+        const tasks = [];
+        for (let i = evaluations.length; i < fens.length; i++) {
+            tasks.push({ moveIndex: i, fen: fens[i], depth });
+        }
 
-    const newResults = await pool.analyze(tasks, (done, total, nps, currentBatch) => {
-        const latestDepth = pool.workers.map(w => w.lastDepth).filter(d => d > 0);
-        const avgDepth = latestDepth.length > 0 ? (latestDepth.reduce((a, b) => a + b, 0) / latestDepth.length).toFixed(1) : 'N/A';
-        log(`  [Progress] ${done}/${total} positions completed. (Avg Depth: ${avgDepth}/${depth}, Total NPS: ${(nps * pool.poolSize / 1000000).toFixed(1)}M)`);
-        
-        // Periodic save (save every position now)
-        const combinedEvals = [...evaluations, ...currentBatch].sort((a, b) => a.move - b.move);
-        const result = {
+        const newResults = await pool.analyze(tasks, (done, total, nps, currentBatch) => {
+            const latestDepth = pool.workers.map(w => w.lastDepth).filter(d => d > 0);
+            const avgDepth = latestDepth.length > 0 ? (latestDepth.reduce((a, b) => a + b, 0) / latestDepth.length).toFixed(1) : 'N/A';
+            log(`  [Progress] ${done}/${total} positions completed. (Avg Depth: ${avgDepth}/${depth}, Total NPS: ${(nps * pool.poolSize / 1000000).toFixed(1)}M)`);
+            
+            // Periodic save (save every position now)
+            const combinedEvals = [...evaluations, ...currentBatch].sort((a, b) => a.move - b.move);
+            const result = {
+                url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
+                endTime: endTime, analysisDepth: depth, evaluations: combinedEvals
+            };
+            try {
+                fs.writeFileSync(filePath, JSON.stringify(result, null, 2));
+            } catch (err) {
+                log(`  [Bot] Error saving periodic result: ${err.message}`);
+            }
+        });
+
+        evaluations = [...evaluations, ...newResults].sort((a, b) => a.move - b.move);
+        const finalResult = {
             url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
-            endTime: endTime, analysisDepth: depth, evaluations: combinedEvals
+            endTime: endTime, analysisDepth: depth, evaluations
         };
-        fs.writeFileSync(filePath, JSON.stringify(result, null, 2));
-    });
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(finalResult, null, 2));
+        } catch (err) {
+            log(`  [Bot] Error saving final result: ${err.message}`);
+        }
+        
+        log(`[Bot] Analysis complete: ${game.url}`);
 
-    evaluations = [...evaluations, ...newResults].sort((a, b) => a.move - b.move);
-    const finalResult = {
-        url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
-        endTime: endTime, analysisDepth: depth, evaluations
-    };
-    fs.writeFileSync(filePath, JSON.stringify(finalResult, null, 2));
-    
-    pool.stop();
-    log(`[Bot] Analysis complete: ${game.url}`);
-
-    const PGNS_DIR = path.join(__dirname, 'pgns');
-    if (!fs.existsSync(PGNS_DIR)) fs.mkdirSync(PGNS_DIR);
-    fs.writeFileSync(path.join(PGNS_DIR, `${gameId}.pgn`), game.pgn);
+        const PGNS_DIR = path.join(__dirname, 'pgns');
+        if (!fs.existsSync(PGNS_DIR)) fs.mkdirSync(PGNS_DIR);
+        try {
+            fs.writeFileSync(path.join(PGNS_DIR, `${gameId}.pgn`), game.pgn);
+        } catch (err) {
+            log(`  [Bot] Error saving PGN: ${err.message}`);
+        }
+    } finally {
+        pool.stop();
+    }
 }
 
 async function runBot() {
