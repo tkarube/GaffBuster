@@ -46,6 +46,13 @@ function log(msg) {
     console.log(`[${ts}] ${msg}`);
 }
 
+// Cleanup any orphaned stockfish processes on startup
+try {
+    const { execSync } = require('child_process');
+    execSync('pkill -9 stockfish || true');
+    log('[Bot] Cleaned up orphaned Stockfish processes');
+} catch (e) {}
+
 class Engine {
     constructor(id, threads, hash) {
         this.id = id;
@@ -56,10 +63,13 @@ class Engine {
         this.currentEval = 0;
         this.resolver = null;
         this.depth = 0;
+        this.lastDepth = 0;
+        this.lastNps = 0;
     }
 
     async start() {
         return new Promise((resolve) => {
+            if (this.stockfish) this.stop();
             this.stockfish = spawn('stockfish');
             
             // Background bot priority (10 = lower priority/nice 10)
@@ -149,19 +159,22 @@ class Engine {
                 if (this.stockfish.stdin && this.stockfish.stdin.writable) {
                     this.stockfish.stdin.write('quit\n');
                 }
+                this.stockfish.kill('SIGKILL');
             } catch (e) {}
-            this.stockfish.kill();
             this.stockfish = null;
             this.busy = false;
         }
     }
 }
 
+let activePool = null;
+
 class WorkerPool {
     constructor(config) {
         this.config = config;
         this.workers = [];
         this.poolSize = 2; // Analyze 2 positions in parallel
+        activePool = this;
     }
 
     async init() {
@@ -418,6 +431,7 @@ if (fs.existsSync(RESULTS_DIR)) {
 
 const shutdown = () => {
     log('[Bot] Shutting down bot...');
+    if (activePool) activePool.stop();
     clearInterval(mainInterval);
     process.exit(0);
 };

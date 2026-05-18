@@ -188,17 +188,25 @@ const PAUSE_FILE = path.join(__dirname, 'results', 'bot_pause.signal');
 if (fs.existsSync(PAUSE_FILE)) try { fs.unlinkSync(PAUSE_FILE); } catch(e) {}
 
 const killEngines = () => {
+    console.log('[Backend] Killing engine processes...');
     [stockfishMain, stockfishScan].forEach(s => {
         if (s) {
             try {
                 if (s.stdin && s.stdin.writable) s.stdin.write('quit\n');
-                s.kill('SIGKILL'); // Use SIGKILL for immediate termination
+                s.kill('SIGKILL');
             } catch (e) {}
         }
     });
     stockfishMain = null;
     stockfishScan = null;
 };
+
+// Cleanup any orphaned stockfish processes on startup
+try {
+    const { execSync } = require('child_process');
+    execSync('pkill -9 stockfish || true');
+    console.log('[Backend] Cleaned up orphaned Stockfish processes');
+} catch (e) {}
 
 wss.on('connection', (ws) => {
     if (activeWs) {
@@ -224,7 +232,11 @@ wss.on('connection', (ws) => {
     const setupEngine = (engine, label) => {
         if (!engine) return;
         engine.on('error', (err) => console.error(`[Engine ${label}] Error:`, err));
-        engine.on('exit', (code, signal) => console.log(`[Engine ${label}] Exited with code ${code}, signal ${signal}`));
+        engine.on('exit', (code, signal) => {
+            console.log(`[Engine ${label}] Exited with code ${code}, signal ${signal}`);
+            if (label === 'main') stockfishMain = null;
+            if (label === 'scan') stockfishScan = null;
+        });
 
         let buffer = '';
         engine.stdout.on('data', (data) => {
@@ -301,6 +313,17 @@ wss.on('connection', (ws) => {
             } else if (cmd.type === 'upgrade_main_engine') {
                 const totalThreads = config.threads || 8;
                 const totalHash = config.hash || 8192;
+                
+                // Kill scan engine to free up all resources
+                if (stockfishScan) {
+                    console.log('[Backend] Terminating scan engine for full-power upgrade');
+                    try {
+                        if (stockfishScan.stdin.writable) stockfishScan.stdin.write('quit\n');
+                        stockfishScan.kill('SIGKILL');
+                    } catch (e) {}
+                    stockfishScan = null;
+                }
+
                 if (stockfishMain && stockfishMain.stdin.writable) {
                     console.log(`[Backend] Upgrading Main Engine to Full Power: ${totalThreads}T/${totalHash}MB`);
                     stockfishMain.stdin.write(`setoption name Threads value ${totalThreads}\n`);
@@ -324,7 +347,9 @@ wss.on('connection', (ws) => {
 server.listen(PORT, '0.0.0.0', () => console.log(`[Backend] Listening on port ${PORT}`));
 
 const shutdown = () => {
+    console.log('[Backend] Shutting down...');
     if (activeWs) activeWs.close();
+    killEngines();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1000);
 };
