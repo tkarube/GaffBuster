@@ -271,6 +271,13 @@ wss.on('connection', (ws) => {
                 stockfishMain.stdin.write('stop\n');
             } else if (cmd.type === 'stop_scan') {
                 stockfishScan.stdin.write('stop\n');
+            } else if (cmd.type === 'upgrade_main_engine') {
+                const totalThreads = config.threads || 8;
+                const totalHash = config.hash || 8192;
+                console.log(`[Backend] Upgrading Main Engine to Full Power: ${totalThreads}T/${totalHash}MB`);
+                stockfishMain.stdin.write(`setoption name Threads value ${totalThreads}\n`);
+                stockfishMain.stdin.write(`setoption name Hash value ${totalHash}\n`);
+                stockfishMain.stdin.write('isready\n');
             }
         } catch (e) {}
     });

@@ -469,6 +469,13 @@ function App() {
               setScanQueueLength(0);
               setCurrentlyAnalyzingGameId(null);
               setIsPreAnalyzed(scanDepth); // Set status to complete after local scan
+              
+              // Upgrade main engine to 1.0 threads
+              if (socketRef.current?.readyState === WebSocket.OPEN) {
+                console.log('[App] Scan complete - Upgrading main engine to full power');
+                socketRef.current.send(JSON.stringify({ type: 'upgrade_main_engine' }));
+              }
+
               if (currentGameIdRef.current) {
                 const localKey = `analysis_${currentGameIdRef.current}`;
                 const saved = localStorage.getItem(localKey);
