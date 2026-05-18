@@ -1060,6 +1060,11 @@ function App() {
   const displayStats = stats;
   const displayOpponentStats = opponentStats;
 
+  // Final check to ensure dots have analyzed: true
+  const chartData = useMemo(() => {
+    return graphData.map(d => ({ ...d, analyzed: d.analyzed ?? true }));
+  }, [graphData]);
+
   return (
     <div className="container">      <header><h1>Chess Analysis Tool</h1></header>
       <main className="main-content">
@@ -1221,9 +1226,10 @@ function App() {
               </div>
               </div>
               <div style={{ height: '100px', width: '310px' }}>
-              <EvaluationGraphView 
-                data={graphData} 
-                currentIndex={currentIndex} 
+              <EvaluationGraphView
+                data={chartData}
+                currentIndex={currentIndex}
+ 
                 onJump={onJump} 
                 boardOrientation={boardOrientation} 
                 branchingPoint={branchingPoint} 
