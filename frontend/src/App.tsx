@@ -468,6 +468,7 @@ function App() {
               setIsScanning(false);
               setScanQueueLength(0);
               setCurrentlyAnalyzingGameId(null);
+              setIsPreAnalyzed(scanDepth); // Set status to complete after local scan
               if (currentGameIdRef.current) {
                 const localKey = `analysis_${currentGameIdRef.current}`;
                 const saved = localStorage.getItem(localKey);
@@ -768,6 +769,9 @@ function App() {
             opponentStatsRef.current = os;
             setStats(s);
             setOpponentStats(os);
+            if (parsed.completed) {
+              setIsPreAnalyzed(parsed.analysisDepth || scanDepth);
+            }
           }
         } catch (e) { console.error('Failed to load local analysis', e); }
       }
@@ -874,7 +878,8 @@ function App() {
             if (currentGameIdRef.current !== gameId) return;
             clearTimeout(timeoutId);
             console.log('[App] [DEBUG] Pre-analysis fetch failed or timed out:', err.message);
-            setIsPreAnalyzed(false);
+            // Keep existing isPreAnalyzed if set by localStorage
+            setIsPreAnalyzed(prev => prev || false);
             const missing = fens.map((f, i) => ({ fen: f, index: i }))
                                 .filter(t => !savedIndices.has(t.index) && t.index !== 0);
             
@@ -889,12 +894,13 @@ function App() {
             }
           });
       } else {
-        setIsPreAnalyzed(false);
+        setIsPreAnalyzed(prev => prev || false);
         const missing = fens.map((f, i) => ({ fen: f, index: i }))
                             .filter(t => !savedIndices.has(t.index) && t.index !== 0);
         console.log(`[App] [DEBUG] processPgn (no-url): missing count=${missing.length}`);
         if (missing.length === 0) {
           setCurrentlyAnalyzingGameId(null);
+          setIsPreAnalyzed(scanDepth); // Final safety check
         } else {
           setCurrentlyAnalyzingGameId(gameId);
           scanQueueRef.current = missing;
@@ -1209,21 +1215,23 @@ function App() {
             </div>
 
             <div className="graph-container">            <div className="graph-header">
-              <div className="graph-title-group">
-                <h3>Evaluation Graph</h3>
-              </div>
-              <div className="graph-header-right">
-                <span className={`graph-eval-indicator-external ${getEvalColorClass(graphHoverEval || currentGraphEval, userColor)}`}>
-                  {graphHoverEval || currentGraphEval || '-.--'}
-                </span>
-                <span className="graph-move-indicator-external">
-                  {(graphHoverIdx !== null ? graphHoverIdx : currentIndex)} / {allFens.length - 1}
-                </span>                {isPreAnalyzed && (
+               <div className="graph-title-group">
+                 <h3>Evaluation Graph</h3>
+               </div>
+               <div className="graph-header-right">
+                 <span className={`graph-eval-indicator-external ${getEvalColorClass(graphHoverEval || currentGraphEval, userColor)}`}>
+                   {graphHoverEval || currentGraphEval || '-.--'}
+                 </span>
+                 <span className="graph-move-indicator-external">
+                   {(graphHoverIdx !== null ? graphHoverIdx : currentIndex)} / {allFens.length - 1}
+                 </span>
+                {isPreAnalyzed && (
                   <span className={`pre-analyzed-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
-                    {isPreAnalyzed >= 30 ? 'Deep Analysis' : 'Pre-Analyzed'} (Depth {isPreAnalyzed})
+                    {isPreAnalyzed >= 30 ? 'Deep Analysis Complete' : 'Analysis Complete'} (Depth {isPreAnalyzed})
                   </span>
                 )}
-              </div>
+               </div>
+
               </div>
               <div style={{ height: '100px', width: '310px' }}>
               <EvaluationGraphView
