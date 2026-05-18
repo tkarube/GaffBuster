@@ -1,6 +1,11 @@
-# GaffBuster ♟️ (v2.2.0)
+# GaffBuster ♟️ (v2.2.1)
 
 GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. It provides professional-grade evaluation, move quality categorization, and automated background analysis of your games.
+
+## What's New in v2.2.1
+-   **Robust Background Analysis**: Fixed a bug where background analysis failed to resume after closing the browser in some environments.
+-   **Local PGN Support**: The analysis bot now automatically scans and analyzes local PGN files uploaded through the interface.
+-   **Improved Reliability**: Optimized polling intervals and resume triggers for smoother background processing.
 
 ## Key Features
 
@@ -54,6 +59,6 @@ Access the application at `https://localhost:5173`.
 -   **DevOps**: Docker, Docker Compose
 
 ## Architecture Note
-GaffBuster v2.2.0 manages resources intelligently:
-1.  **Analysis Bot**: Pauses instantly when a user connects to the web interface to prevent resource contention.
+GaffBuster v2.2.1 manages resources intelligently:
+1.  **Analysis Bot**: Pauses instantly when a user connects to the web interface to prevent resource contention. It uses a robust signal-based resume mechanism to restart analysis as soon as the session ends.
 2.  **Resource Balancing**: Interactive analysis threads are split **50/50** between the main engine and the graph scanner (e.g., 4T/4T for an 8T system) to accelerate background scanning while maintaining responsive interactivity.

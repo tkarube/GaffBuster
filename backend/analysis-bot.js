@@ -239,6 +239,10 @@ async function analyzeGame(game, config) {
         log(`[Bot] Failed to load PGN: ${e.message}`);
         return;
     }
+
+    const whiteName = game.white?.username || chess.header().White || 'White';
+    const blackName = game.black?.username || chess.header().Black || 'Black';
+    const endTime = game.end_time || chess.header().EndTime || Math.floor(Date.now() / 1000);
     
     const history = chess.history({ verbose: true });
     const fens = [new Chess().fen()];
@@ -279,16 +283,16 @@ async function analyzeGame(game, config) {
         // Periodic save (save every position now)
         const combinedEvals = [...evaluations, ...currentBatch].sort((a, b) => a.move - b.move);
         const result = {
-            url: game.url, pgn: game.pgn, white: game.white.username, black: game.black.username,
-            endTime: game.end_time, analysisDepth: depth, evaluations: combinedEvals
+            url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
+            endTime: endTime, analysisDepth: depth, evaluations: combinedEvals
         };
         fs.writeFileSync(filePath, JSON.stringify(result, null, 2));
     });
 
     evaluations = [...evaluations, ...newResults].sort((a, b) => a.move - b.move);
     const finalResult = {
-        url: game.url, pgn: game.pgn, white: game.white.username, black: game.black.username,
-        endTime: game.end_time, analysisDepth: depth, evaluations
+        url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
+        endTime: endTime, analysisDepth: depth, evaluations
     };
     fs.writeFileSync(filePath, JSON.stringify(finalResult, null, 2));
     
@@ -325,6 +329,24 @@ async function runBot() {
 
     const analyzedGames = loadAnalyzedGames();
 
+    // 1. Check local PGNs first
+    const PGNS_DIR = path.join(__dirname, 'pgns');
+    if (fs.existsSync(PGNS_DIR)) {
+        const localFiles = fs.readdirSync(PGNS_DIR).filter(f => f.endsWith('.pgn'));
+        for (const file of localFiles) {
+            const gameId = file.replace('.pgn', '');
+            const localUrl = `local/${gameId}`;
+            if (!analyzedGames.includes(localUrl)) {
+                const pgn = fs.readFileSync(path.join(PGNS_DIR, file), 'utf8');
+                log(`[Bot] Found local game to analyze: ${gameId}`);
+                await analyzeGame({ url: localUrl, pgn }, config);
+                analyzedGames.push(localUrl);
+                saveAnalyzedGames(analyzedGames);
+            }
+        }
+    }
+
+    // 2. Check Chess.com archives
     try {
         const archivesRes = await axios.get(`https://api.chess.com/pub/player/${username}/games/archives`);
         const archives = archivesRes.data.archives;
@@ -349,7 +371,7 @@ async function runBot() {
     isRunning = false;
 }
 
-const INTERVAL = 3600000;
+const INTERVAL = 600000; // 10 minutes
 log(`[Bot] Starting loop...`);
 runBot();
 const mainInterval = setInterval(runBot, INTERVAL);
@@ -357,13 +379,14 @@ const mainInterval = setInterval(runBot, INTERVAL);
 let watchTimer = null;
 if (fs.existsSync(RESULTS_DIR)) {
     fs.watch(RESULTS_DIR, (eventType, filename) => {
-        if (filename === 'bot_pause.signal' && !fs.existsSync(PAUSE_FILE)) {
+        // More robust check: if the pause file is gone, trigger a check regardless of 'filename'
+        if (!isPaused() && !isRunning) {
             if (watchTimer) return;
             watchTimer = setTimeout(() => {
                 log('[Bot] Resume signal - Triggering check');
                 runBot();
                 watchTimer = null;
-            }, 5000);
+            }, 2000);
         }
     });
 }
