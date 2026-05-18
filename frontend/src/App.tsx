@@ -693,6 +693,7 @@ function App() {
       }
       setAnalysisStartTime(null);
       evalRef.current = null;
+      candidatesRef.current = []; // Clear ref immediately
       setCandidates([]);
       setEvaluation(null);
 
