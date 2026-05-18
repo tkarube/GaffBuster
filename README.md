@@ -1,11 +1,13 @@
-# GaffBuster ♟️ (v2.2.2)
+# GaffBuster ♟️ (v2.2.3)
 
 GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. It provides professional-grade evaluation, move quality categorization, and automated background analysis of your games.
 
-## What's New in v2.2.2
--   **Enhanced Depth Upgrades**: The background bot now automatically identifies and upgrades existing low-depth analyses (e.g., from frontend scans) to the target depth (Depth 30).
--   **Improved Persistence**: Fixed a logic gap where games analyzed at lower depths were incorrectly skipped by the background bot.
--   **Graceful Error Handling**: Added robust error recovery to the analysis bot to ensure continuous operation even if transient errors occur.
+## What's New in v2.2.3
+-   **Dynamic Thread Reallocation**: Automatically upgrades the main engine to 100% CPU threads once the background scan is complete, maximizing analysis depth for the current position.
+-   **Robust Process Management**: Fixed issues with duplicate Stockfish processes by implementing explicit cleanup on startup, shutdown, and reallocation.
+-   **Automated Permission Handling**: Improved Makefile and backend logic to prevent root-owned directory issues and ensure consistent file access.
+-   **UI Persistence**: Analysis indicators (quality dots) now persist correctly even after clearing the browser cache, as long as the data exists on the server.
+-   **Analysis Status Badges**: Added clear "Analysis Complete" and "Deep Analysis Complete" badges to the evaluation graph.
 
 ## Key Features
 
