@@ -796,16 +796,9 @@ function App() {
               if (mergedData[e.move]) {
                 let evalVal = 0;
                 if (typeof e.eval === 'string') {
-                  // M+3 / M-1 labels
                   evalVal = e.eval.startsWith('M+') ? 10 : (e.eval.startsWith('M-') ? -10 : parseFloat(e.eval));
                 } else {
-                  // HEURISTIC: Legacy backend data uses integers (cp), 
-                  // while frontend and new backend use floats (cp/100).
-                  // If it's an integer and Math.abs > 10, it's likely legacy side-to-move.
-                  // However, a score of 0 or small ints are ambiguous.
-                  // We'll check if any evaluation in the set is > 10.
                   const isLegacy = !data.evaluations.every((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) < 50);
-                  
                   if (isLegacy && Math.abs(e.eval) > 0.001) {
                     const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
                     const side = (turn === 'w') ? 1 : -1;
@@ -814,7 +807,8 @@ function App() {
                     evalVal = e.eval;
                   }
                 }
-                mergedData[e.move] = { ...mergedData[e.move], eval: evalVal, analyzed: true };
+                const quality = e.quality || 'normal';
+                mergedData[e.move] = { ...mergedData[e.move], eval: evalVal, quality, analyzed: true };
                 savedIndices.add(e.move);
               }
             });
@@ -824,26 +818,31 @@ function App() {
               if (!mergedData[i].analyzed) continue;
               const score = mergedData[i].eval;
               const prevEval = mergedData[i-1].eval;
-              const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
-              let quality: any = 'normal';
-              if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
-              else if (delta >= 1.0) quality = 'great';
-              else if (delta >= -0.1) quality = 'best';
-              else if (delta <= -3.0) quality = 'blunder';
-              else if (delta <= -1.5) quality = 'miss';
-              else if (delta <= -0.8) quality = 'mistake';
-              mergedData[i].quality = quality;
               
-              if (quality !== 'normal') {
+              // Only recalculate quality if it's currently 'normal' or if it was never set (safety)
+              if (mergedData[i].quality === 'normal') {
+                const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
+                let quality: any = 'normal';
+                if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
+                else if (delta >= 1.0) quality = 'great';
+                else if (delta >= -0.1) quality = 'best';
+                else if (delta <= -3.0) quality = 'blunder';
+                else if (delta <= -1.5) quality = 'miss';
+                else if (delta <= -0.8) quality = 'mistake';
+                mergedData[i].quality = quality;
+              }
+              
+              const finalQuality = mergedData[i].quality;
+              if (finalQuality && finalQuality !== 'normal') {
                 const playerMoved = (i % 2 !== 0) ? 'w' : 'b';
                 const isUser = userColor === playerMoved;
                 const target = isUser ? s : os;
-                if (quality === 'brilliant') target.brilliant++;
-                else if (quality === 'great') target.great++;
-                else if (quality === 'best') target.best++;
-                else if (quality === 'mistake') target.mistake++;
-                else if (quality === 'miss') target.miss++;
-                else if (quality === 'blunder') target.blunder++;
+                if (finalQuality === 'brilliant') target.brilliant++;
+                else if (finalQuality === 'great') target.great++;
+                else if (finalQuality === 'best') target.best++;
+                else if (finalQuality === 'mistake') target.mistake++;
+                else if (finalQuality === 'miss') target.miss++;
+                else if (finalQuality === 'blunder') target.blunder++;
               }
             }
 
