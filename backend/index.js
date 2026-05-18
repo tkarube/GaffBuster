@@ -181,29 +181,54 @@ server.on('upgrade', (req, socket, head) => {
 app.use('/', proxy);
 
 let activeWs = null;
+let stockfishMain = null;
+let stockfishScan = null;
+
 const PAUSE_FILE = path.join(__dirname, 'results', 'bot_pause.signal');
 if (fs.existsSync(PAUSE_FILE)) try { fs.unlinkSync(PAUSE_FILE); } catch(e) {}
 
+const killEngines = () => {
+    [stockfishMain, stockfishScan].forEach(s => {
+        if (s) {
+            try {
+                if (s.stdin && s.stdin.writable) s.stdin.write('quit\n');
+                s.kill('SIGKILL'); // Use SIGKILL for immediate termination
+            } catch (e) {}
+        }
+    });
+    stockfishMain = null;
+    stockfishScan = null;
+};
+
 wss.on('connection', (ws) => {
-    if (activeWs) activeWs.close();
+    if (activeWs) {
+        console.log('[Backend] Closing previous connection');
+        activeWs.close();
+    }
     activeWs = ws;
+    
+    // Ensure old engines are gone before spawning new ones
+    killEngines();
+
     console.log('[Backend] Frontend connected - Bot PAUSED');
     if (!fs.existsSync(PAUSE_FILE)) try { fs.writeFileSync(PAUSE_FILE, 'paused'); } catch(e) {}
 
-    const stockfishMain = spawn('stockfish');
-    const stockfishScan = spawn('stockfish');
+    stockfishMain = spawn('stockfish');
+    stockfishScan = spawn('stockfish');
     
     try {
-        os.setPriority(stockfishMain.pid, 0);
-        os.setPriority(stockfishScan.pid, 10);
+        if (stockfishMain.pid) os.setPriority(stockfishMain.pid, 0);
+        if (stockfishScan.pid) os.setPriority(stockfishScan.pid, 10);
     } catch (e) {}
 
     const setupEngine = (engine, label) => {
+        if (!engine) return;
         engine.on('error', (err) => console.error(`[Engine ${label}] Error:`, err));
         engine.on('exit', (code, signal) => console.log(`[Engine ${label}] Exited with code ${code}, signal ${signal}`));
 
         let buffer = '';
         engine.stdout.on('data', (data) => {
+            if (ws.readyState !== 1) return; // Only send if WS is OPEN
             buffer += data.toString();
             const lines = buffer.split('\n');
             buffer = lines.pop();
@@ -245,6 +270,7 @@ wss.on('connection', (ws) => {
                 console.log(`[Backend] UCI Setup - Main: ${mainThreads}T/${mainHash}MB, Scan: ${scanThreads}T/${scanHash}MB (Total: ${totalThreads}T)`);
 
                 const initEngine = (engine, threads, hash, multipv) => {
+                    if (!engine || !engine.stdin.writable) return;
                     engine.stdin.write('uci\n');
                     engine.stdin.write(`setoption name Threads value ${threads}\n`);
                     engine.stdin.write(`setoption name Hash value ${hash}\n`);
@@ -257,38 +283,41 @@ wss.on('connection', (ws) => {
                 initEngine(stockfishScan, scanThreads, scanHash);
             } else if (cmd.type === 'position') {
                 const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+                if (!stockfishMain || !stockfishMain.stdin.writable) return;
                 if (cmd.fen === startFen) {
                     stockfishMain.stdin.write('stop\n');
                 } else if (cmd.fen) {
                     stockfishMain.stdin.write(`stop\nposition fen ${cmd.fen}\ngo movetime 300000\n`);
                 }
             } else if (cmd.type === 'scan_position') {
-                if (cmd.fen) {
+                if (cmd.fen && stockfishScan && stockfishScan.stdin.writable) {
                     const depth = config.scanDepth || 22;
                     stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
                 }
             } else if (cmd.type === 'stop') {
-                stockfishMain.stdin.write('stop\n');
+                if (stockfishMain && stockfishMain.stdin.writable) stockfishMain.stdin.write('stop\n');
             } else if (cmd.type === 'stop_scan') {
-                stockfishScan.stdin.write('stop\n');
+                if (stockfishScan && stockfishScan.stdin.writable) stockfishScan.stdin.write('stop\n');
             } else if (cmd.type === 'upgrade_main_engine') {
                 const totalThreads = config.threads || 8;
                 const totalHash = config.hash || 8192;
-                console.log(`[Backend] Upgrading Main Engine to Full Power: ${totalThreads}T/${totalHash}MB`);
-                stockfishMain.stdin.write(`setoption name Threads value ${totalThreads}\n`);
-                stockfishMain.stdin.write(`setoption name Hash value ${totalHash}\n`);
-                stockfishMain.stdin.write('isready\n');
+                if (stockfishMain && stockfishMain.stdin.writable) {
+                    console.log(`[Backend] Upgrading Main Engine to Full Power: ${totalThreads}T/${totalHash}MB`);
+                    stockfishMain.stdin.write(`setoption name Threads value ${totalThreads}\n`);
+                    stockfishMain.stdin.write(`setoption name Hash value ${totalHash}\n`);
+                    stockfishMain.stdin.write('isready\n');
+                }
             }
         } catch (e) {}
     });
 
     ws.on('close', () => {
-        console.log('[Backend] Frontend disconnected - Bot RESUMED');
         if (activeWs === ws) {
+            console.log('[Backend] Frontend disconnected - Bot RESUMED');
             activeWs = null;
             if (fs.existsSync(PAUSE_FILE)) try { fs.unlinkSync(PAUSE_FILE); } catch(e) {}
+            killEngines();
         }
-        [stockfishMain, stockfishScan].forEach(s => { try { s.stdin.write('quit\n'); s.kill(); } catch(e) {} });
     });
 });
 
