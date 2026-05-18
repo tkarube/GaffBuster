@@ -958,6 +958,12 @@ function App() {
   const fetchLocalGames = async () => {
     setLoadingLocal(true);
     try {
+      // Also fetch analyzed IDs to ensure status dots are correct after cache clear
+      fetch('/api/analyzed-ids')
+        .then(res => res.ok ? res.json() : [])
+        .then(ids => setAnalyzedGameIds(ids))
+        .catch(() => {});
+
       const res = await fetch('/api/local-games');
       if (res.ok) {
         const data = await res.json();
