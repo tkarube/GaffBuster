@@ -253,20 +253,31 @@ async function analyzeGame(game, config) {
     }
 
     let evaluations = [];
+    let existingDepth = 0;
     if (fs.existsSync(filePath)) {
         try {
             const existing = JSON.parse(fs.readFileSync(filePath));
             evaluations = existing.evaluations || [];
+            existingDepth = existing.analysisDepth || 0;
         } catch (e) {}
     }
 
-    if (evaluations.length >= fens.length) {
-        log(`[Bot] Already analyzed: ${game.url}`);
+    if (evaluations.length >= fens.length && existingDepth >= depth) {
+        log(`[Bot] Already analyzed at depth ${existingDepth}: ${game.url}`);
         return;
     }
 
-    log(`[Bot] Starting parallel analysis: ${game.url} (Depth ${depth}, Positions ${fens.length - evaluations.length})`);
-    
+    if (existingDepth < depth) {
+        log(`[Bot] Starting/Resuming analysis: ${game.url} (Target Depth ${depth}, Current Depth ${existingDepth})`);
+        // If depth is higher, we should ideally re-analyze from the beginning to ensure consistency,
+        // but for now let's at least analyze missing moves or re-start if it was a lower depth scan.
+        if (evaluations.length >= fens.length) {
+            evaluations = []; // Reset if we were at a lower depth but "finished"
+        }
+    } else {
+        log(`[Bot] Continuing analysis: ${game.url} (Depth ${depth}, Remaining ${fens.length - evaluations.length} positions)`);
+    }
+
     const pool = new WorkerPool(config);
     await pool.init();
 
@@ -308,46 +319,60 @@ async function runBot() {
     if (isRunning) return;
     isRunning = true;
     
-    if (isPaused()) {
-        isRunning = false;
-        return;
-    }
+    try {
+        if (isPaused()) {
+            return;
+        }
 
-    log('[Bot] Checking for new games...');
-    if (!fs.existsSync(CONFIG_PATH)) {
-        log('[Bot] config.json missing');
-        isRunning = false;
-        return;
-    }
+        log('[Bot] Checking for new games...');
+        if (!fs.existsSync(CONFIG_PATH)) {
+            log('[Bot] config.json missing');
+            return;
+        }
 
-    const config = JSON.parse(fs.readFileSync(CONFIG_PATH));
-    const username = config.chessComUsername;
-    if (!username || username === 'YOUR_CHESS_COM_USERNAME') {
-        isRunning = false;
-        return;
-    }
+        const config = JSON.parse(fs.readFileSync(CONFIG_PATH));
+        const username = config.chessComUsername;
+        if (!username || username === 'YOUR_CHESS_COM_USERNAME') {
+            return;
+        }
 
-    const analyzedGames = loadAnalyzedGames();
+        const analyzedGames = loadAnalyzedGames();
 
-    // 1. Check local PGNs first
-    const PGNS_DIR = path.join(__dirname, 'pgns');
-    if (fs.existsSync(PGNS_DIR)) {
-        const localFiles = fs.readdirSync(PGNS_DIR).filter(f => f.endsWith('.pgn'));
-        for (const file of localFiles) {
-            const gameId = file.replace('.pgn', '');
-            const localUrl = `local/${gameId}`;
-            if (!analyzedGames.includes(localUrl)) {
-                const pgn = fs.readFileSync(path.join(PGNS_DIR, file), 'utf8');
-                log(`[Bot] Found local game to analyze: ${gameId}`);
-                await analyzeGame({ url: localUrl, pgn }, config);
-                analyzedGames.push(localUrl);
-                saveAnalyzedGames(analyzedGames);
+        // 1. Check local PGNs first
+        const PGNS_DIR = path.join(__dirname, 'pgns');
+        const targetDepth = config.analysisDepth || 30;
+        if (fs.existsSync(PGNS_DIR)) {
+            const localFiles = fs.readdirSync(PGNS_DIR).filter(f => f.endsWith('.pgn'));
+            for (const file of localFiles) {
+                const gameId = file.replace('.pgn', '');
+                const localUrl = `local/${gameId}`;
+                const resultPath = path.join(RESULTS_DIR, `${gameId}.json`);
+                
+                let needsAnalysis = !analyzedGames.includes(localUrl);
+                
+                // If it's already in analyzedGames, double check the depth
+                if (!needsAnalysis && fs.existsSync(resultPath)) {
+                    try {
+                        const existing = JSON.parse(fs.readFileSync(resultPath));
+                        if ((existing.analysisDepth || 0) < targetDepth) {
+                            needsAnalysis = true;
+                        }
+                    } catch (e) {}
+                }
+
+                if (needsAnalysis) {
+                    const pgn = fs.readFileSync(path.join(PGNS_DIR, file), 'utf8');
+                    log(`[Bot] Found local game to analyze/upgrade: ${gameId}`);
+                    await analyzeGame({ url: localUrl, pgn }, config);
+                    if (!analyzedGames.includes(localUrl)) {
+                        analyzedGames.push(localUrl);
+                        saveAnalyzedGames(analyzedGames);
+                    }
+                }
             }
         }
-    }
 
-    // 2. Check Chess.com archives
-    try {
+        // 2. Check Chess.com archives
         const archivesRes = await axios.get(`https://api.chess.com/pub/player/${username}/games/archives`);
         const archives = archivesRes.data.archives;
         if (archives && archives.length > 0) {
@@ -365,10 +390,10 @@ async function runBot() {
             }
         }
     } catch (error) {
-        log(`[Bot] Error: ${error.message}`);
+        log(`[Bot] Error in runBot: ${error.message}`);
+    } finally {
+        isRunning = false;
     }
-    
-    isRunning = false;
 }
 
 const INTERVAL = 600000; // 10 minutes
