@@ -49,7 +49,7 @@ make add-user user=your_name pass=your_password
 make build
 make up
 ```
-Access the application at `https://localhost:5173`.
+Access the application at `https://localhost:5000`.
 
 ## Technology Stack
 
