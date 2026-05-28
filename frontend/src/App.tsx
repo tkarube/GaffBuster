@@ -887,14 +887,14 @@ function App() {
             const s = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
             const os = { brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 };
 
+            const hasDecimals = data.evaluations.some((ev: any) => typeof ev.eval === 'number' && ev.eval % 1 !== 0);
+            const isLegacy = !hasDecimals && data.evaluations.some((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) >= 150);
+
             data.evaluations.forEach((e: any) => {
               if (mergedData[e.move]) {
                 let evalVal = parseEvalValue(e.eval);
-                const isLegacy = data.evaluations.some((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) >= 50);
                 if (isLegacy && Math.abs(evalVal) > 0.001 && typeof e.eval !== 'string') {
-                  const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
-                  const side = (turn === 'w') ? 1 : -1;
-                  evalVal = (side * evalVal) / 100;
+                  evalVal = evalVal / 100;
                 }
                 const quality = e.quality || 'normal';
                 mergedData[e.move] = { ...mergedData[e.move], eval: evalVal, quality, analyzed: true };
