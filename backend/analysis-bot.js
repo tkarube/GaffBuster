@@ -37,6 +37,34 @@ function saveAnalyzedGames(games) {
     fs.writeFileSync(ANALYZED_GAMES_PATH, JSON.stringify(games, null, 2));
 }
 
+function postProcessEvaluations(evaluations, fens) {
+    const evMap = new Map();
+    evaluations.forEach(e => evMap.set(e.move, e));
+
+    for (let i = fens.length - 1; i >= 0; i--) {
+        const e = evMap.get(i);
+        if (!e) continue;
+
+        const fen = fens[i];
+        try {
+            const tempChess = new Chess(fen);
+            if (tempChess.isCheckmate()) {
+                const turn = fen.split(' ')[1];
+                e.eval = turn === 'w' ? 'M-0' : 'M+0';
+            } else if (tempChess.isDraw() && tempChess.moves().length === 0) {
+                e.eval = 0;
+            } else if (tempChess.moves().length === 1) {
+                const nextE = evMap.get(i + 1);
+                if (nextE) {
+                    e.eval = nextE.eval;
+                }
+            }
+        } catch (err) {
+            log(`[Bot] Error post-processing FEN at move ${i}: ${err.message}`);
+        }
+    }
+}
+
 function isPaused() {
     return fs.existsSync(PAUSE_FILE);
 }
@@ -321,6 +349,7 @@ async function analyzeGame(game, config) {
             
             // Periodic save (save every position now)
             const combinedEvals = [...evaluations, ...currentBatch].sort((a, b) => a.move - b.move);
+            postProcessEvaluations(combinedEvals, fens);
             const result = {
                 url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
                 endTime: endTime, analysisDepth: depth, evaluations: combinedEvals
@@ -333,6 +362,7 @@ async function analyzeGame(game, config) {
         });
 
         evaluations = [...evaluations, ...newResults].sort((a, b) => a.move - b.move);
+        postProcessEvaluations(evaluations, fens);
         const finalResult = {
             url: game.url, pgn: game.pgn, white: whiteName, black: blackName,
             endTime: endTime, analysisDepth: depth, evaluations

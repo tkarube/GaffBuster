@@ -44,6 +44,43 @@ const parseStockfishScore = (line: string, turn: 'w' | 'b') => {
   return { score, label };
 };
 
+const parseEvalValue = (val: string | number) => {
+  if (typeof val === 'string') {
+    if (val.startsWith('M+')) return 10;
+    if (val.startsWith('M-')) return -10;
+    const parsed = parseFloat(val);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  return typeof val === 'number' && !isNaN(val) ? val : 0;
+};
+
+const postProcessGraphData = (data: GraphPoint[], fens: string[]) => {
+  const processed = data.map(d => ({ ...d }));
+  for (let i = fens.length - 1; i >= 0; i--) {
+    if (!processed[i]) continue;
+
+    const fen = fens[i];
+    try {
+      const chessObj = new Chess(fen);
+      if (chessObj.isCheckmate()) {
+        processed[i].eval = fen.split(' ')[1] === 'w' ? -10 : 10;
+        processed[i].analyzed = true;
+      } else if (chessObj.isDraw() && chessObj.moves().length === 0) {
+        processed[i].eval = 0;
+        processed[i].analyzed = true;
+      } else if (chessObj.moves().length === 1) {
+        if (processed[i + 1] && processed[i + 1].analyzed) {
+          processed[i].eval = processed[i + 1].eval;
+          processed[i].analyzed = true;
+        }
+      }
+    } catch (e) {
+      console.error('Error post-processing FEN:', e);
+    }
+  }
+  return processed;
+};
+
 /**
  * Returns 'winning' if the user has the advantage, 'losing' otherwise.
  * Handles both numeric scores and formatted strings (M+1, -1.50, etc.)
@@ -452,6 +489,47 @@ function App() {
 
             isScanningRef.current = false;
 
+            if (typeof idx === 'number' && allFensRef.current[idx] && currentGameIdRef.current) {
+              const newData = [...graphDataRef.current];
+              while (newData.length <= idx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
+
+              if (!newData[idx].analyzed) {
+                newData[idx].analyzed = true;
+              }
+
+              const processedData = postProcessGraphData(newData, allFensRef.current);
+              graphDataRef.current = processedData;
+
+              if (branchingPoint === null || idx <= branchingPoint) {
+                const mainData = [...originalGraphDataRef.current];
+                if (mainData[idx]) {
+                  mainData[idx] = { ...mainData[idx], analyzed: true };
+                  originalGraphDataRef.current = postProcessGraphData(mainData, allFensRef.current);
+                }
+              }
+
+              setGraphData([...processedData]);
+
+              const localKey = `analysis_${currentGameIdRef.current}`;
+              const evalData = processedData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
+              localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
+
+              if (idx % 5 === 0 || scanQueueRef.current.length === 0) {
+                 fetch('/api/save-analysis', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({
+                     gameId: currentGameIdRef.current,
+                     evaluations: evalData,
+                     pgn: (window as any).lastPgn,
+                     white: players.white,
+                     black: players.black,
+                     analysisDepth: scanDepth
+                   })
+                 }).catch(err => console.error('Failed to save analysis to server', err));
+              }
+            }
+
             if (scanQueueRef.current.length > 0) {
               setScanQueueLength(scanQueueRef.current.length);
               processNextScan(); 
@@ -506,21 +584,23 @@ function App() {
                 }
 
                 newData[lastIdx] = { move: lastIdx, eval: score, quality, analyzed: true };
-                graphDataRef.current = newData;
+                
+                const processedData = postProcessGraphData(newData, allFensRef.current);
+                graphDataRef.current = processedData;
 
                 if (branchingPoint === null || lastIdx <= branchingPoint) {
                   const mainData = [...originalGraphDataRef.current];
                   if (mainData[lastIdx]) {
                     mainData[lastIdx] = { ...mainData[lastIdx], eval: score, quality, analyzed: true };
-                    originalGraphDataRef.current = mainData;
+                    originalGraphDataRef.current = postProcessGraphData(mainData, allFensRef.current);
                   }
                 }
 
                 currentMoveQualityRef.current = quality;
-                setGraphData([...newData]);
+                setGraphData([...processedData]);
 
                 const localKey = `analysis_${currentGameIdRef.current}`;
-                const evalData = newData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
+                const evalData = processedData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
                 localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
 
                 if (lastIdx % 5 === 0 || scanQueueRef.current.length === 0) {
@@ -756,7 +836,7 @@ function App() {
             parsed.evaluations.forEach((e: any) => {
               if (loadedData[e.move]) {
                 const quality = e.quality || 'normal';
-                loadedData[e.move] = { ...loadedData[e.move], eval: e.eval, quality, analyzed: true };
+                loadedData[e.move] = { ...loadedData[e.move], eval: parseEvalValue(e.eval), quality, analyzed: true };
                 savedIndices.add(e.move);
 
                 if (quality !== 'normal') {
@@ -772,9 +852,10 @@ function App() {
                 }
               }
             });
-            graphDataRef.current = loadedData;
-            originalGraphDataRef.current = [...loadedData];
-            setGraphData([...loadedData]);
+            const processedData = postProcessGraphData(loadedData, allFensRef.current);
+            graphDataRef.current = processedData;
+            originalGraphDataRef.current = [...processedData];
+            setGraphData([...processedData]);
             statsRef.current = s;
             opponentStatsRef.current = os;
             setStats(s);
@@ -808,18 +889,12 @@ function App() {
 
             data.evaluations.forEach((e: any) => {
               if (mergedData[e.move]) {
-                let evalVal = 0;
-                if (typeof e.eval === 'string') {
-                  evalVal = e.eval.startsWith('M+') ? 10 : (e.eval.startsWith('M-') ? -10 : parseFloat(e.eval));
-                } else {
-                  const isLegacy = data.evaluations.some((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) >= 50);
-                  if (isLegacy && Math.abs(e.eval) > 0.001) {
-                    const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
-                    const side = (turn === 'w') ? 1 : -1;
-                    evalVal = (side * e.eval) / 100;
-                  } else {
-                    evalVal = e.eval;
-                  }
+                let evalVal = parseEvalValue(e.eval);
+                const isLegacy = data.evaluations.some((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) >= 50);
+                if (isLegacy && Math.abs(evalVal) > 0.001 && typeof e.eval !== 'string') {
+                  const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
+                  const side = (turn === 'w') ? 1 : -1;
+                  evalVal = (side * evalVal) / 100;
                 }
                 const quality = e.quality || 'normal';
                 mergedData[e.move] = { ...mergedData[e.move], eval: evalVal, quality, analyzed: true };
@@ -827,14 +902,17 @@ function App() {
               }
             });
 
+            // Post-process to resolve checkmates and forced moves before recalculating qualities
+            const processedData = postProcessGraphData(mergedData, fens);
+
             // Re-calculate all qualities and stats
-            for (let i = 1; i < mergedData.length; i++) {
-              if (!mergedData[i].analyzed) continue;
-              const score = mergedData[i].eval;
-              const prevEval = mergedData[i-1].eval;
+            for (let i = 1; i < processedData.length; i++) {
+              if (!processedData[i].analyzed) continue;
+              const score = processedData[i].eval;
+              const prevEval = processedData[i-1].eval;
               
               // Only recalculate quality if it's currently 'normal' or if it was never set (safety)
-              if (mergedData[i].quality === 'normal') {
+              if (processedData[i].quality === 'normal') {
                 const delta = (i % 2 !== 0) ? (score - prevEval) : (prevEval - score);
                 let quality: any = 'normal';
                 if (delta >= 2.0 && Math.abs(prevEval) < 2.0) quality = 'brilliant';
@@ -843,10 +921,10 @@ function App() {
                 else if (delta <= -3.0) quality = 'blunder';
                 else if (delta <= -1.5) quality = 'miss';
                 else if (delta <= -0.8) quality = 'mistake';
-                mergedData[i].quality = quality;
+                processedData[i].quality = quality;
               }
               
-              const finalQuality = mergedData[i].quality;
+              const finalQuality = processedData[i].quality;
               if (finalQuality && finalQuality !== 'normal') {
                 const playerMoved = (i % 2 !== 0) ? 'w' : 'b';
                 const isUser = userColor === playerMoved;
@@ -860,9 +938,9 @@ function App() {
               }
             }
 
-            graphDataRef.current = mergedData;
-            originalGraphDataRef.current = [...mergedData];
-            setGraphData([...mergedData]);
+            graphDataRef.current = processedData;
+            originalGraphDataRef.current = [...processedData];
+            setGraphData([...processedData]);
             statsRef.current = s;
             opponentStatsRef.current = os;
             setStats(s);
