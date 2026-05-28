@@ -1,6 +1,9 @@
-# GaffBuster ♟️ (v2.2.4)
+# GaffBuster ♟️ (v2.2.5)
 
 GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. It provides professional-grade evaluation, move quality categorization, and automated background analysis of your games.
+
+## What's New in v2.2.5
+-   **Engine Synchronization**: Fixed a race condition where the main evaluation bar would temporarily display the wrong +/- sign when navigating between moves. Stockfish's `isready` and `readyok` commands are now used to completely isolate evaluation streams between positions.
 
 ## What's New in v2.2.4
 -   **Dynamic Scan Engine Recovery**: Automatically respawns the background scan engine and dynamically re-allocates 50/50 CPU resources if a new scan/branch request is received after the main engine has been upgraded to full power.

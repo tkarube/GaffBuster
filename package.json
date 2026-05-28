@@ -1,6 +1,6 @@
 {
   "name": "chess",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "A powerful, web-based chess analysis application powered by the **Stockfish** engine.  Import games directly from Chess.com, visualize evaluation trends with real-time graphs, and perform deep game reviews with move quality classification.",
   "scripts": {
     "start": "concurrently \"cd backend && node index.js\" \"cd frontend && npm run dev\"",

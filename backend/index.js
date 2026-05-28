@@ -262,7 +262,11 @@ wss.on('connection', (ws) => {
                             ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
                         }
                     } else if (label === 'main') {
-                        ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                        if (trimmed === 'readyok') {
+                            engine.ignoreUntilReady = false;
+                        } else if (!engine.ignoreUntilReady && trimmed.includes('score')) {
+                            ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                        }
                     }
                 }
             }
@@ -311,10 +315,13 @@ wss.on('connection', (ws) => {
             } else if (cmd.type === 'position') {
                 const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
                 if (!stockfishMain || !stockfishMain.stdin.writable) return;
+                
+                stockfishMain.ignoreUntilReady = true;
+
                 if (cmd.fen === startFen) {
                     stockfishMain.stdin.write('stop\n');
                 } else if (cmd.fen) {
-                    stockfishMain.stdin.write(`stop\nposition fen ${cmd.fen}\ngo movetime 300000\n`);
+                    stockfishMain.stdin.write(`stop\nposition fen ${cmd.fen}\nisready\ngo movetime 300000\n`);
                 }
             } else if (cmd.type === 'scan_position') {
                 if (cmd.fen) {
