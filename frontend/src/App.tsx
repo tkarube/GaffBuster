@@ -468,13 +468,13 @@ function App() {
         // Prioritize scan engine messages
         if (message.engine === 'scan' || message.type === 'scan_complete') {
           if (message.type === 'scan_complete') {
-            if (isScanningRef.current === false) {
+            const idx = message.index !== undefined ? message.index : isScanningRef.current;
+            if (idx !== isScanningRef.current || isScanningRef.current === false) {
               console.log('[App] Ignoring stale scan_complete');
               return;
             }
             if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
             const q = currentMoveQualityRef.current;
-            const idx = isScanningRef.current;
             if (q && typeof idx === 'number' && idx > 0) {
               const playerMoved = (idx % 2 !== 0) ? 'w' : 'b';
               const isUser = userColorRef.current === playerMoved;
@@ -562,8 +562,8 @@ function App() {
           }
 
           if (message.type === 'info') {
-            const lastIdx = isScanningRef.current;
-            if (typeof lastIdx === 'number' && allFensRef.current[lastIdx] && currentGameIdRef.current) {
+            const lastIdx = message.index !== undefined ? message.index : isScanningRef.current;
+            if (typeof lastIdx === 'number' && lastIdx === isScanningRef.current && allFensRef.current[lastIdx] && currentGameIdRef.current) {
               const turn = allFensRef.current[lastIdx].split(' ')[1] as 'w' | 'b';
               const parsed = parseStockfishScore(message.data, turn);
               if (parsed) {

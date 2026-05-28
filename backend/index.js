@@ -235,6 +235,8 @@ wss.on('connection', (ws) => {
         if (stockfishScan.pid) os.setPriority(stockfishScan.pid, 10);
     } catch (e) {}
 
+    let currentScanIndex = null;
+
     const setupEngine = (engine, label) => {
         if (!engine) return;
         engine.on('error', (err) => console.error(`[Engine ${label}] Error:`, err));
@@ -260,9 +262,9 @@ wss.on('connection', (ws) => {
                             engine.ignoreUntilReady = false;
                         } else if (!engine.ignoreUntilReady) {
                             if (trimmed.startsWith('bestmove')) {
-                                ws.send(JSON.stringify({ type: 'scan_complete', engine: label }));
+                                ws.send(JSON.stringify({ type: 'scan_complete', engine: label, index: currentScanIndex }));
                             } else if (trimmed.includes('score')) {
-                                ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                                ws.send(JSON.stringify({ type: 'info', engine: label, index: currentScanIndex, data: trimmed }));
                             }
                         }
                     } else if (label === 'main') {
@@ -296,6 +298,7 @@ wss.on('connection', (ws) => {
             const cmd = JSON.parse(msg.toString());
             console.log(`[Backend] Received command: ${cmd.type}`);
             if (cmd.type === 'uci') {
+                currentScanIndex = null;
                 if (!stockfishScan) {
                     console.log('[Backend] Respawning scan engine');
                     stockfishScan = spawn('stockfish');
@@ -328,6 +331,7 @@ wss.on('connection', (ws) => {
                     stockfishMain.stdin.write(`stop\nposition fen ${cmd.fen}\nisready\ngo movetime 300000\n`);
                 }
             } else if (cmd.type === 'scan_position') {
+                currentScanIndex = cmd.index;
                 if (cmd.fen) {
                     if (!stockfishScan || !stockfishScan.stdin || !stockfishScan.stdin.writable) {
                         console.log('[Backend] Scan engine not running or not writable. Respawning and partitioning resources...');
@@ -360,8 +364,10 @@ wss.on('connection', (ws) => {
             } else if (cmd.type === 'stop') {
                 if (stockfishMain && stockfishMain.stdin.writable) stockfishMain.stdin.write('stop\n');
             } else if (cmd.type === 'stop_scan') {
+                currentScanIndex = null;
                 if (stockfishScan && stockfishScan.stdin.writable) stockfishScan.stdin.write('stop\n');
             } else if (cmd.type === 'upgrade_main_engine') {
+                currentScanIndex = null;
                 const totalThreads = config.threads || 8;
                 const totalHash = config.hash || 8192;
                 
