@@ -1,6 +1,11 @@
-# GaffBuster ♟️ (v2.2.3)
+# GaffBuster ♟️ (v2.2.4)
 
 GaffBuster is a high-performance, web-based chess analysis application powered by **Stockfish 18**. It provides professional-grade evaluation, move quality categorization, and automated background analysis of your games.
+
+## What's New in v2.2.4
+-   **Dynamic Scan Engine Recovery**: Automatically respawns the background scan engine and dynamically re-allocates 50/50 CPU resources if a new scan/branch request is received after the main engine has been upgraded to full power.
+-   **Non-Blocking Engine Reconfiguration**: Improved real-time board analysis responsiveness by explicitly stopping the main Stockfish engine (`stop` command) before modifying its Threads or Hash options during resource reallocation.
+-   **Custom FEN Support in Bot**: Updated background analysis bot to correctly load game FEN headers instead of defaulting to the standard starting position.
 
 ## What's New in v2.2.3
 -   **Dynamic Thread Reallocation**: Automatically upgrades the main engine to 100% CPU threads once the background scan is complete, maximizing analysis depth for the current position.
@@ -61,6 +66,6 @@ Access the application at `https://localhost:5000`.
 -   **DevOps**: Docker, Docker Compose
 
 ## Architecture Note
-GaffBuster v2.2.2 manages resources intelligently:
+GaffBuster v2.2.4 manages resources intelligently:
 1.  **Analysis Bot**: Pauses instantly when a user connects to the web interface to prevent resource contention. It uses a robust signal-based resume mechanism to restart analysis as soon as the session ends.
 2.  **Resource Balancing**: Interactive analysis threads are split **50/50** between the main engine and the graph scanner (e.g., 4T/4T for an 8T system) to accelerate background scanning while maintaining responsive interactivity.
