@@ -123,12 +123,19 @@ app.get('/api/analysis/:gameId', (req, res) => {
 });
 
 app.get('/api/analyzed-ids', (req, res) => {
-    const analyzedPath = path.join(__dirname, 'analyzed_games.json');
-    if (!fs.existsSync(analyzedPath)) return res.json([]);
+    const resultsDir = path.join(__dirname, 'results');
+    if (!fs.existsSync(resultsDir)) return res.json([]);
     try {
-        const games = JSON.parse(fs.readFileSync(analyzedPath, 'utf8'));
-        const ids = games.map(url => url.split('/').pop());
-        res.json(ids);
+        const files = fs.readdirSync(resultsDir).filter(f => f.endsWith('.json'));
+        const analyzed = [];
+        for (const file of files) {
+            const gameId = file.replace('.json', '');
+            try {
+                const data = JSON.parse(fs.readFileSync(path.join(resultsDir, file)));
+                analyzed.push({ id: gameId, depth: data.analysisDepth || 0 });
+            } catch (e) {}
+        }
+        res.json(analyzed);
     } catch (e) {
         res.json([]);
     }

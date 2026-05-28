@@ -271,7 +271,7 @@ function App() {
   const [scanDepth, setScanDepth] = useState<number>(22);
   const [analysisDepth, setAnalysisDepth] = useState<number>(30);
   const [isPreAnalyzed, setIsPreAnalyzed] = useState<number | false>(false);
-  const [analyzedGameIds, setAnalyzedGameIds] = useState<string[]>([]);
+  const [analyzedGames, setAnalyzedGames] = useState<{ id: string; depth: number }[]>([]);
   const [currentlyAnalyzingGameId, setCurrentlyAnalyzingGameId] = useState<string | null>(null);
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState<number | false>(false);
@@ -1053,8 +1053,8 @@ function App() {
       
       const archivesData = await archivesRes.json();
       if (analyzedIdsRes.ok) {
-        const ids = await analyzedIdsRes.json();
-        setAnalyzedGameIds(ids);
+        const games = await analyzedIdsRes.json();
+        setAnalyzedGames(games);
       }
 
       const latest = archivesData.archives[archivesData.archives.length - 1];
@@ -1084,7 +1084,7 @@ function App() {
       // Also fetch analyzed IDs to ensure status dots are correct after cache clear
       fetch('/api/analyzed-ids')
         .then(res => res.ok ? res.json() : [])
-        .then(ids => setAnalyzedGameIds(ids))
+        .then(games => setAnalyzedGames(games))
         .catch(() => {});
 
       const res = await fetch('/api/local-games');
@@ -1455,14 +1455,16 @@ function App() {
           <div className="chess-com-import">
             <h3>Chess.com Import ({chessComUsername})</h3>
             <div className="import-legend">
-              <span className="analyzed-status-dot backend">●</span> Server Analysis
-              <span className="analyzed-status-dot local" style={{ marginLeft: '10px' }}>●</span> Local Analysis
+              <span className="analyzed-status-dot backend">●</span> Deep Analysis (Depth ≥30)
+              <span className="analyzed-status-dot local" style={{ marginLeft: '10px' }}>●</span> Quick Analysis (Depth &lt;30)
             </div>
             <button onClick={() => fetchGames()} disabled={loadingGames}>{loadingGames ? '...' : 'Fetch Recent Games'}</button>
             <div className="games-list">
               {chessComGames.map((g, i) => {
                 const gameId = g.url.split('/').pop();
-                const isBackendAnalyzed = analyzedGameIds.includes(gameId);
+                const serverGame = analyzedGames.find(ag => ag.id === gameId);
+                const isBackendAnalyzed = serverGame !== undefined;
+                const isBackendDeep = isBackendAnalyzed && (serverGame.depth >= 30);
                 const isAnalyzing = currentlyAnalyzingGameId === gameId;
                 const localAnalysis = (() => {
                   const saved = localStorage.getItem(`analysis_${gameId}`);
@@ -1474,9 +1476,9 @@ function App() {
                 const isLocalIncomplete = !isLocalComplete && localAnalysis?.evaluations?.length > 0;
 
                 let statusClass = '';
-                if (isBackendAnalyzed) statusClass = 'backend';
+                if (isBackendDeep) statusClass = 'backend';
                 else if (isAnalyzing) statusClass = 'analyzing-local';
-                else if (isLocalComplete) statusClass = 'local';
+                else if (isLocalComplete || (isBackendAnalyzed && serverGame.depth < 30)) statusClass = 'local';
                 else if (isLocalIncomplete) statusClass = 'incomplete';
 
                 const isSelected = selectedGameId === gameId;
@@ -1514,7 +1516,9 @@ function App() {
               {localGames.length === 0 ? <div className="no-games">No local games found</div> : 
                 localGames.map((g, i) => {
                   const gameId = g.id;
-                  const isBackendAnalyzed = analyzedGameIds.includes(gameId);
+                  const serverGame = analyzedGames.find(ag => ag.id === gameId);
+                  const isBackendAnalyzed = serverGame !== undefined;
+                  const isBackendDeep = isBackendAnalyzed && (serverGame.depth >= 30);
                   const isAnalyzing = currentlyAnalyzingGameId === gameId;
                   const localAnalysis = (() => {
                     const saved = localStorage.getItem(`analysis_${gameId}`);
@@ -1526,9 +1530,9 @@ function App() {
                   const isLocalIncomplete = !isLocalComplete && localAnalysis?.evaluations?.length > 0;
 
                   let statusClass = '';
-                  if (isBackendAnalyzed) statusClass = 'backend';
+                  if (isBackendDeep) statusClass = 'backend';
                   else if (isAnalyzing) statusClass = 'analyzing-local';
-                  else if (isLocalComplete) statusClass = 'local';
+                  else if (isLocalComplete || (isBackendAnalyzed && serverGame.depth < 30)) statusClass = 'local';
                   else if (isLocalIncomplete) statusClass = 'incomplete';
 
                   const isSelected = selectedGameId === gameId;
