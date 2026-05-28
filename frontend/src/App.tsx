@@ -293,6 +293,7 @@ function App() {
   const [lastMoveSquares, setLastMoveSquares] = useState<any[]>([]);
   const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState('0.0s');
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const evalRef = useRef<string | null>(null);
   const candidatesRef = useRef<any[]>([]);
@@ -780,10 +781,14 @@ function App() {
   }, [currentIndex, allFens.length, goToMove]);
 
   const clearLocalCache = () => {
-    if (window.confirm('Clear all local analysis results from browser memory?')) {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+    } else {
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith('analysis_')) localStorage.removeItem(key);
       });
+      setConfirmClear(false);
       window.location.reload();
     }
   };
@@ -1553,8 +1558,18 @@ function App() {
               }
             </div>
             <div style={{ marginTop: '20px', borderTop: '1px solid #444', paddingTop: '15px' }}>
-              <button onClick={clearLocalCache} className="btn-clear-cache" style={{ width: '100%', backgroundColor: '#555' }}>
-                Clear Browser Analysis Cache
+              <button 
+                onClick={clearLocalCache} 
+                className="btn-clear-cache" 
+                style={{ 
+                  width: '100%', 
+                  backgroundColor: confirmClear ? '#ca3431' : '#555',
+                  color: confirmClear ? '#fff' : '#ccc',
+                  fontWeight: confirmClear ? 'bold' : 'normal',
+                  borderColor: confirmClear ? '#b71c1c' : '#555'
+                }}
+              >
+                {confirmClear ? 'Are you sure? Click again to Clear' : 'Clear Browser Analysis Cache'}
               </button>
             </div>
           </div>
