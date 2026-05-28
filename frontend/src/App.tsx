@@ -276,6 +276,7 @@ function App() {
   const isScanningRef = useRef<number | false>(false);
   const currentMoveQualityRef = useRef<any>(null);
   const lastAnalyzedFenRef = useRef<string | null>(null);
+  const mainAnalysisTurnRef = useRef<'w' | 'b' | null>(null);
 
   useEffect(() => {
     fenRef.current = fen;
@@ -335,12 +336,14 @@ function App() {
         setEvaluation('0.00');
         setCandidates([]);
         socketRef.current.send(JSON.stringify({ type: 'stop' }));
+        mainAnalysisTurnRef.current = 'w';
         return;
       }
       
       if (evalRef.current === null || lastAnalyzedFenRef.current !== fenRef.current) {
         console.log('[App] Requesting main analysis');
         lastAnalyzedFenRef.current = fenRef.current;
+        mainAnalysisTurnRef.current = fenRef.current.split(' ')[1] as 'w' | 'b';
         candidatesRef.current = [];
         evalRef.current = null;
         setAnalysisStartTime(Date.now());
@@ -547,7 +550,7 @@ function App() {
           if (pvMatch) {
             const rank = parseInt(pvMatch[1]);
             const pvMoveMatch = line.match(/\spv\s+(\w+)/);
-            const turn = fenRef.current.split(' ')[1] as 'w' | 'b';
+            const turn = mainAnalysisTurnRef.current || (fenRef.current.split(' ')[1] as 'w' | 'b');
             const parsed = parseStockfishScore(line, turn);
 
             if (parsed && pvMoveMatch) {
@@ -589,14 +592,24 @@ function App() {
       setShowGraphOverlay(true);
     }
 
-    // If clicking from graph on/before the branch origin, restore main line
-    if (fromGraph && branchingPoint !== null && targetIndex <= branchingPoint && originalGameRef.current) {
+    // If going to or before the branch origin, restore main line
+    if (branchingPoint !== null && targetIndex <= branchingPoint && originalGameRef.current) {
       const main = originalGameRef.current;
       setAllFens(main.allFens);
       allFensRef.current = main.allFens;
       setMoveHistory(main.moveHistory);
       setLastMoveSquares(main.lastMoveSquares);
       setBranchingPoint(null);
+
+      // Stop and clear any ongoing scan tasks for the branch to prevent evaluation pollution
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'stop_scan' }));
+      }
+      isScanningRef.current = false;
+      setIsScanning(false);
+      scanQueueRef.current = [];
+      setScanQueueLength(0);
+
       // Restore graph data to full main line
       const restoredGraph = [...originalGraphDataRef.current];
       graphDataRef.current = restoredGraph;
