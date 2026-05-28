@@ -31,7 +31,6 @@ const parseStockfishScore = (line: string, turn: 'w' | 'b') => {
     const cp = parseInt(cpMatch[1]);
     // Stockfish cp is relative to side-to-move. White-POV = cp * side / 100
     score = (side * cp) / 100;
-    score = Math.max(-10, Math.min(10, score));
     const sign = score > 0 ? '+' : (score < 0 ? '-' : '');
     label = `${sign}${Math.abs(score).toFixed(2)}`;
     if (Math.abs(score) < 0.001) label = '0.00';
@@ -50,11 +49,9 @@ const parseEvalValue = (val: string | number) => {
     if (val.startsWith('M+')) return 10;
     if (val.startsWith('M-')) return -10;
     const parsed = parseFloat(val);
-    const num = isNaN(parsed) ? 0 : parsed;
-    return Math.max(-10, Math.min(10, num));
+    return isNaN(parsed) ? 0 : parsed;
   }
-  const num = typeof val === 'number' && !isNaN(val) ? val : 0;
-  return Math.max(-10, Math.min(10, num));
+  return typeof val === 'number' && !isNaN(val) ? val : 0;
 };
 
 const postProcessGraphData = (data: GraphPoint[], fens: string[]) => {
