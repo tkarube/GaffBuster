@@ -799,7 +799,7 @@ function App() {
                 if (typeof e.eval === 'string') {
                   evalVal = e.eval.startsWith('M+') ? 10 : (e.eval.startsWith('M-') ? -10 : parseFloat(e.eval));
                 } else {
-                  const isLegacy = !data.evaluations.every((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) < 50);
+                  const isLegacy = data.evaluations.some((ev: any) => typeof ev.eval === 'number' && Math.abs(ev.eval) >= 50);
                   if (isLegacy && Math.abs(e.eval) > 0.001) {
                     const turn = fens[e.move].split(' ')[1] as 'w' | 'b';
                     const side = (turn === 'w') ? 1 : -1;

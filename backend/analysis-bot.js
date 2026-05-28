@@ -218,7 +218,17 @@ class WorkerPool {
                 // Convert to White-POV: Stockfish gives POV of side-to-move
                 const turn = task.fen.split(' ')[1];
                 const side = (turn === 'w') ? 1 : -1;
-                const whitePovScore = (side * evalValue) / 100;
+                let whitePovScore = 0;
+                if (typeof evalValue === 'string') {
+                    // It's a mate like "M5" or "M-3"
+                    const mateIn = parseInt(evalValue.substring(1));
+                    const isWhiteWinning = (turn === 'w' && mateIn > 0) || (turn === 'b' && mateIn < 0);
+                    const mateSign = isWhiteWinning ? '+' : '-';
+                    whitePovScore = `M${mateSign}${Math.abs(mateIn)}`;
+                } else {
+                    // Numeric evaluation (already divided by 100 in Engine)
+                    whitePovScore = side * evalValue;
+                }
                 
                 const resultObj = { move: task.moveIndex, fen: task.fen, eval: whitePovScore };
                 results.push(resultObj);
