@@ -297,6 +297,7 @@ function App() {
   const evalRef = useRef<string | null>(null);
   const candidatesRef = useRef<any[]>([]);
   const graphDataRef = useRef<GraphPoint[]>([]);
+  const currentScanEvalRef = useRef<{ score: number; label: string; quality: any } | null>(null);
   const statsRef = useRef<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const opponentStatsRef = useRef<any>({ brilliant: 0, great: 0, best: 0, mistake: 0, miss: 0, blunder: 0 });
   const [userColor, setUserColor] = useState<'w' | 'b' | null>(null);
@@ -474,7 +475,16 @@ function App() {
               return;
             }
             if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
-            const q = currentMoveQualityRef.current;
+            
+            // Retrieve evaluation and quality from temp Ref
+            let score = 0;
+            let q: any = 'normal';
+            if (currentScanEvalRef.current) {
+              score = currentScanEvalRef.current.score;
+              q = currentScanEvalRef.current.quality;
+            }
+            currentScanEvalRef.current = null; // Clear ref
+
             if (q && typeof idx === 'number' && idx > 0) {
               const playerMoved = (idx % 2 !== 0) ? 'w' : 'b';
               const isUser = userColorRef.current === playerMoved;
@@ -493,9 +503,7 @@ function App() {
               const newData = [...graphDataRef.current];
               while (newData.length <= idx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
 
-              if (!newData[idx].analyzed) {
-                newData[idx].analyzed = true;
-              }
+              newData[idx] = { move: idx, eval: score, quality: q, analyzed: true };
 
               const processedData = postProcessGraphData(newData, allFensRef.current);
               graphDataRef.current = processedData;
@@ -503,7 +511,7 @@ function App() {
               if (branchingPoint === null || idx <= branchingPoint) {
                 const mainData = [...originalGraphDataRef.current];
                 if (mainData[idx]) {
-                  mainData[idx] = { ...mainData[idx], analyzed: true };
+                  mainData[idx] = { ...mainData[idx], eval: score, quality: q, analyzed: true };
                   originalGraphDataRef.current = postProcessGraphData(mainData, allFensRef.current);
                 }
               }
@@ -567,7 +575,7 @@ function App() {
               const turn = allFensRef.current[lastIdx].split(' ')[1] as 'w' | 'b';
               const parsed = parseStockfishScore(message.data, turn);
               if (parsed) {
-                const { score } = parsed;
+                const { score, label } = parsed;
                 const newData = [...graphDataRef.current];
                 while (newData.length <= lastIdx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
 
@@ -583,40 +591,8 @@ function App() {
                   else if (delta <= -0.8) quality = 'mistake';
                 }
 
-                newData[lastIdx] = { move: lastIdx, eval: score, quality, analyzed: true };
-                
-                const processedData = postProcessGraphData(newData, allFensRef.current);
-                graphDataRef.current = processedData;
-
-                if (branchingPoint === null || lastIdx <= branchingPoint) {
-                  const mainData = [...originalGraphDataRef.current];
-                  if (mainData[lastIdx]) {
-                    mainData[lastIdx] = { ...mainData[lastIdx], eval: score, quality, analyzed: true };
-                    originalGraphDataRef.current = postProcessGraphData(mainData, allFensRef.current);
-                  }
-                }
-
+                currentScanEvalRef.current = { score, label, quality };
                 currentMoveQualityRef.current = quality;
-                setGraphData([...processedData]);
-
-                const localKey = `analysis_${currentGameIdRef.current}`;
-                const evalData = processedData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
-                localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
-
-                if (lastIdx % 5 === 0 || scanQueueRef.current.length === 0) {
-                   fetch('/api/save-analysis', {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({
-                       gameId: currentGameIdRef.current,
-                       evaluations: evalData,
-                       pgn: (window as any).lastPgn,
-                       white: players.white,
-                       black: players.black,
-                       analysisDepth: scanDepth
-                     })
-                   }).catch(err => console.error('Failed to save analysis to server', err));
-                }
               }
             }
           }
