@@ -256,10 +256,14 @@ wss.on('connection', (ws) => {
                 const trimmed = line.trim();
                 if (trimmed) {
                     if (label === 'scan') {
-                        if (trimmed.startsWith('bestmove')) {
-                            ws.send(JSON.stringify({ type: 'scan_complete', engine: label }));
-                        } else if (trimmed.includes('score')) {
-                            ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                        if (trimmed === 'readyok') {
+                            engine.ignoreUntilReady = false;
+                        } else if (!engine.ignoreUntilReady) {
+                            if (trimmed.startsWith('bestmove')) {
+                                ws.send(JSON.stringify({ type: 'scan_complete', engine: label }));
+                            } else if (trimmed.includes('score')) {
+                                ws.send(JSON.stringify({ type: 'info', engine: label, data: trimmed }));
+                            }
                         }
                     } else if (label === 'main') {
                         if (trimmed === 'readyok') {
@@ -349,7 +353,8 @@ wss.on('connection', (ws) => {
                     
                     if (stockfishScan && stockfishScan.stdin.writable) {
                         const depth = config.scanDepth || 22;
-                        stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
+                        stockfishScan.ignoreUntilReady = true;
+                        stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\nisready\ngo depth ${depth}\n`);
                     }
                 }
             } else if (cmd.type === 'stop') {
