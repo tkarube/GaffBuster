@@ -179,7 +179,7 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, branchingPoint, 
   // visual orientation is FIXED to White-POV (Up=White, Down=Black)
   const orientedData = data.map((d: any) => ({
     ...d,
-    displayEval: d.eval 
+    displayEval: Math.max(-10, Math.min(10, d.eval))
   }));
 
   const handleClick = (d: any) => {
