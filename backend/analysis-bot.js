@@ -256,6 +256,7 @@ class WorkerPool {
                 } else {
                     // Numeric evaluation (already divided by 100 in Engine)
                     whitePovScore = side * evalValue;
+                    whitePovScore = Math.max(-10, Math.min(10, whitePovScore));
                 }
                 
                 const resultObj = { move: task.moveIndex, fen: task.fen, eval: whitePovScore };
