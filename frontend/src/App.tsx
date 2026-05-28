@@ -92,7 +92,7 @@ const CustomTooltip = ({ active, payload, userColor }: any) => {
   return null;
 };
 
-const EvaluationBar = memo(({ evaluation, userColor }: { evaluation: string | null, userColor: 'w' | 'b' | null }) => {
+const EvaluationBar = memo(({ evaluation }: { evaluation: string | null, userColor: 'w' | 'b' | null }) => {
   const getEvalPercentage = () => {
     if (!evaluation) return 50;
     
@@ -134,23 +134,10 @@ const CustomDot = (props: any) => {
   return <circle cx={cx} cy={cy} r={radius} fill={color} stroke="none" />;
 };
 
-const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation, branchingPoint, isPreAnalyzed, showOverlay, userColor, onHover }: any) => {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-
+const EvaluationGraphView = memo(({ data, currentIndex, onJump, branchingPoint, userColor, onHover }: any) => {
   if (data.length === 0) {
     return <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: '12px' }}>Analyzing...</div>;
   }
-
-  const activeIdx = hoverIdx !== null ? hoverIdx : (showOverlay ? currentIndex : null);
-  const currentPoint = data[activeIdx ?? currentIndex] || data[0];
-  const evalNum = currentPoint.eval;
-  
-  const sign = evalNum > 0 ? '+' : (evalNum < 0 ? '-' : '');
-  let displayEval = `${sign}${Math.abs(evalNum).toFixed(2)}`;
-  if (Math.abs(evalNum) < 0.001) displayEval = '0.00';
-  if (Math.abs(evalNum) >= 9.9) displayEval = evalNum > 0 ? 'M+' : 'M-';
-
-  const colorClass = getEvalColorClass(evalNum, userColor);
 
   // visual orientation is FIXED to White-POV (Up=White, Down=Black)
   const orientedData = data.map((d: any) => ({
@@ -168,7 +155,6 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
   const handleMouseMove = (d: any) => {
     if (d && d.activeTooltipIndex !== undefined) {
       const idx = d.activeTooltipIndex;
-      setHoverIdx(idx);
       
       const point = data[idx] || data[0];
       const pEval = point.eval;
@@ -179,14 +165,12 @@ const EvaluationGraphView = memo(({ data, currentIndex, onJump, boardOrientation
 
       if (onHover) onHover(idx, pLabel);
     } else {
-      setHoverIdx(null);
       if (onHover) onHover(null, null);
     }
   };
 
   return (
     <div className="graph-wrapper-relative" onMouseLeave={() => {
-      setHoverIdx(null);
       if (onHover) onHover(null, null);
     }}>
       <ResponsiveContainer width="100%" height={100}>
@@ -444,6 +428,10 @@ function App() {
         // Prioritize scan engine messages
         if (message.engine === 'scan' || message.type === 'scan_complete') {
           if (message.type === 'scan_complete') {
+            if (isScanningRef.current === false) {
+              console.log('[App] Ignoring stale scan_complete');
+              return;
+            }
             if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
             const q = currentMoveQualityRef.current;
             const idx = isScanningRef.current;
@@ -697,6 +685,7 @@ function App() {
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: 'stop' }));
         socketRef.current.send(JSON.stringify({ type: 'stop_scan' }));
+        socketRef.current.send(JSON.stringify({ type: 'uci' }));
       }
       setAnalysisStartTime(null);
       evalRef.current = null;
@@ -870,6 +859,9 @@ function App() {
                                 .filter(t => !savedIndices.has(t.index) && t.index !== 0);
             
             console.log(`[App] [DEBUG] After backend merge: missing count=${missing.length}`);
+            if (missing.length > 0) {
+               console.log('[App] [DEBUG] Missing indices:', missing.map(m => m.index));
+            }
             if (missing.length === 0) {
               setCurrentlyAnalyzingGameId(null);
               // Backend complete, so we can clear local storage
@@ -1206,11 +1198,6 @@ function App() {
             <div className="stat-main">
               <div className="stat-info-group">
                 <span className="stat-label">Evaluation</span>
-                {isPreAnalyzed && (branchingPoint === null || currentIndex <= branchingPoint) && (
-                  <span className={`pre-analyzed-badge-inline ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
-                    Pre-Analyzed (Depth {isPreAnalyzed})
-                  </span>
-                )}
               </div>
               <div className={`stat-value highlight ${getEvalColorClass(evaluation, userColor)}`}>
                 {evaluation || '0.00'}
@@ -1265,23 +1252,22 @@ function App() {
                     Scanning... ({scanQueueLength} left)
                   </span>
                 </div>
-              ) : isPreAnalyzed && (
+              ) : isPreAnalyzed && (branchingPoint === null || currentIndex <= branchingPoint) && (
                 <div className="scanning-status-under">
                   <span className={`scanning-badge ${isPreAnalyzed >= 30 ? 'deep' : 'regular'}`}>
                     Pre-Analyzed (Depth {isPreAnalyzed})
                   </span>
                 </div>
               )}
+              <div className="quality-indicator-wrapper">
+                {qualityInfo && (
+                  <div className={`move-quality-box ${currentMoveQuality}`}>
+                    <span className="quality-icon">{qualityInfo.icon}</span>
+                    <span className="quality-text">{qualityInfo.label}</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="quality-indicator-wrapper">
-              {qualityInfo && (
-                <div className={`move-quality-box ${currentMoveQuality}`}>
-                  <span className="quality-icon">{qualityInfo.icon}</span>
-                  <span className="quality-text">{qualityInfo.label}</span>
-                </div>
-              )}
-            </div>
-          </div>
           <div className="game-review">
             <div className="review-grid">
               <div className="review-col">

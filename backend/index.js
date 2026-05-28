@@ -123,9 +123,15 @@ app.get('/api/analysis/:gameId', (req, res) => {
 });
 
 app.get('/api/analyzed-ids', (req, res) => {
-    const dir = path.join(__dirname, 'results');
-    if (!fs.existsSync(dir)) return res.json([]);
-    res.json(fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => f.replace('.json', '')));
+    const analyzedPath = path.join(__dirname, 'analyzed_games.json');
+    if (!fs.existsSync(analyzedPath)) return res.json([]);
+    try {
+        const games = JSON.parse(fs.readFileSync(analyzedPath, 'utf8'));
+        const ids = games.map(url => url.split('/').pop());
+        res.json(ids);
+    } catch (e) {
+        res.json([]);
+    }
 });
 
 app.get('/api/local-games', (req, res) => {
@@ -240,8 +246,10 @@ wss.on('connection', (ws) => {
 
         let buffer = '';
         engine.stdout.on('data', (data) => {
+            const str = data.toString();
+            console.log(`[Engine ${label}] ${str.trim()}`);
             if (ws.readyState !== 1) return; // Only send if WS is OPEN
-            buffer += data.toString();
+            buffer += str;
             const lines = buffer.split('\n');
             buffer = lines.pop();
             for (const line of lines) {
@@ -261,6 +269,17 @@ wss.on('connection', (ws) => {
         });
     };
 
+    const configureEngine = (engine, threads, hash, multipv, stopFirst, isNewGame) => {
+        if (!engine || !engine.stdin.writable) return;
+        if (stopFirst) engine.stdin.write('stop\n');
+        engine.stdin.write('uci\n');
+        engine.stdin.write(`setoption name Threads value ${threads}\n`);
+        engine.stdin.write(`setoption name Hash value ${hash}\n`);
+        if (multipv) engine.stdin.write(`setoption name MultiPV value ${multipv}\n`);
+        if (isNewGame) engine.stdin.write('ucinewgame\n');
+        engine.stdin.write('isready\n');
+    };
+
     setupEngine(stockfishMain, 'main');
     setupEngine(stockfishScan, 'scan');
 
@@ -269,6 +288,12 @@ wss.on('connection', (ws) => {
             const cmd = JSON.parse(msg.toString());
             console.log(`[Backend] Received command: ${cmd.type}`);
             if (cmd.type === 'uci') {
+                if (!stockfishScan) {
+                    console.log('[Backend] Respawning scan engine');
+                    stockfishScan = spawn('stockfish');
+                    try { if (stockfishScan.pid) os.setPriority(stockfishScan.pid, 10); } catch(e){}
+                    setupEngine(stockfishScan, 'scan');
+                }
                 const totalThreads = config.threads || 8;
                 const totalHash = config.hash || 8192;
                 
@@ -281,18 +306,8 @@ wss.on('connection', (ws) => {
 
                 console.log(`[Backend] UCI Setup - Main: ${mainThreads}T/${mainHash}MB, Scan: ${scanThreads}T/${scanHash}MB (Total: ${totalThreads}T)`);
 
-                const initEngine = (engine, threads, hash, multipv) => {
-                    if (!engine || !engine.stdin.writable) return;
-                    engine.stdin.write('uci\n');
-                    engine.stdin.write(`setoption name Threads value ${threads}\n`);
-                    engine.stdin.write(`setoption name Hash value ${hash}\n`);
-                    if (multipv) engine.stdin.write(`setoption name MultiPV value ${multipv}\n`);
-                    engine.stdin.write('ucinewgame\n');
-                    engine.stdin.write('isready\n');
-                };
-
-                initEngine(stockfishMain, mainThreads, mainHash, 3);
-                initEngine(stockfishScan, scanThreads, scanHash);
+                configureEngine(stockfishMain, mainThreads, mainHash, 3, false, true);
+                configureEngine(stockfishScan, scanThreads, scanHash, null, false, true);
             } else if (cmd.type === 'position') {
                 const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
                 if (!stockfishMain || !stockfishMain.stdin.writable) return;
@@ -302,9 +317,33 @@ wss.on('connection', (ws) => {
                     stockfishMain.stdin.write(`stop\nposition fen ${cmd.fen}\ngo movetime 300000\n`);
                 }
             } else if (cmd.type === 'scan_position') {
-                if (cmd.fen && stockfishScan && stockfishScan.stdin.writable) {
-                    const depth = config.scanDepth || 22;
-                    stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
+                if (cmd.fen) {
+                    if (!stockfishScan || !stockfishScan.stdin || !stockfishScan.stdin.writable) {
+                        console.log('[Backend] Scan engine not running or not writable. Respawning and partitioning resources...');
+                        
+                        // Spawn scan engine
+                        stockfishScan = spawn('stockfish');
+                        try { if (stockfishScan.pid) os.setPriority(stockfishScan.pid, 10); } catch(e){}
+                        setupEngine(stockfishScan, 'scan');
+
+                        const totalThreads = config.threads || 8;
+                        const totalHash = config.hash || 8192;
+                        
+                        const mainThreads = Math.max(1, Math.floor(totalThreads * 0.5));
+                        const scanThreads = Math.max(1, totalThreads - mainThreads);
+                        
+                        const mainHash = Math.max(32, Math.floor(totalHash * 0.5));
+                        const scanHash = Math.max(32, totalHash - mainHash);
+
+                        console.log(`[Backend] UCI Setup on Demand - Main: ${mainThreads}T/${mainHash}MB, Scan: ${scanThreads}T/${scanHash}MB (Total: ${totalThreads}T)`);
+                        configureEngine(stockfishMain, mainThreads, mainHash, 3, true, true);
+                        configureEngine(stockfishScan, scanThreads, scanHash, null, false, true);
+                    }
+                    
+                    if (stockfishScan && stockfishScan.stdin.writable) {
+                        const depth = config.scanDepth || 22;
+                        stockfishScan.stdin.write(`stop\nposition fen ${cmd.fen}\ngo depth ${depth}\n`);
+                    }
                 }
             } else if (cmd.type === 'stop') {
                 if (stockfishMain && stockfishMain.stdin.writable) stockfishMain.stdin.write('stop\n');
@@ -326,9 +365,7 @@ wss.on('connection', (ws) => {
 
                 if (stockfishMain && stockfishMain.stdin.writable) {
                     console.log(`[Backend] Upgrading Main Engine to Full Power: ${totalThreads}T/${totalHash}MB`);
-                    stockfishMain.stdin.write(`setoption name Threads value ${totalThreads}\n`);
-                    stockfishMain.stdin.write(`setoption name Hash value ${totalHash}\n`);
-                    stockfishMain.stdin.write('isready\n');
+                    configureEngine(stockfishMain, totalThreads, totalHash, 3, true, false);
                 }
             }
         } catch (e) {}

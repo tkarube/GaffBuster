@@ -258,8 +258,12 @@ async function analyzeGame(game, config) {
     const endTime = game.end_time || chess.header().EndTime || Math.floor(Date.now() / 1000);
     
     const history = chess.history({ verbose: true });
-    const fens = [new Chess().fen()];
+    
     let tempChess = new Chess();
+    const fenHeader = chess.header().FEN;
+    if (fenHeader) tempChess.load(fenHeader);
+    
+    const fens = [tempChess.fen()];
     for (const move of history) {
         tempChess.move(move);
         fens.push(tempChess.fen());
