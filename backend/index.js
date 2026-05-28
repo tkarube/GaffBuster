@@ -297,7 +297,19 @@ wss.on('connection', (ws) => {
         try {
             const cmd = JSON.parse(msg.toString());
             console.log(`[Backend] Received command: ${cmd.type}`);
-            if (cmd.type === 'uci') {
+            if (cmd.type === 'respawn_scan_engine') {
+                currentScanIndex = null;
+                if (stockfishScan) {
+                    console.log('[Backend] Force respawning scan engine due to timeout');
+                    try {
+                        if (stockfishScan.stdin && stockfishScan.stdin.writable) {
+                            stockfishScan.stdin.write('quit\n');
+                        }
+                        stockfishScan.kill('SIGKILL');
+                    } catch(e) {}
+                    stockfishScan = null;
+                }
+            } else if (cmd.type === 'uci') {
                 currentScanIndex = null;
                 if (!stockfishScan) {
                     console.log('[Backend] Respawning scan engine');

@@ -357,10 +357,69 @@ function App() {
       // Watchdog: Reset scanning state if it takes too long (10s)
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = setTimeout(() => {
-        console.log(`[App] [DEBUG] Scan watchdog triggered for move ${next.index}. Resetting...`);
+        console.log(`[App] [DEBUG] Scan watchdog triggered for move ${next.index}. Force resetting scan engine...`);
+        
+        // 1. Tell backend to respawn the scan engine to discard any stale search process
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({ type: 'respawn_scan_engine' }));
+        }
+
+        // 2. Safely capture the best eval we got so far (or default to 0/normal)
+        let score = 0;
+        let quality: any = 'normal';
+        if (currentScanEvalRef.current) {
+          score = currentScanEvalRef.current.score;
+          quality = currentScanEvalRef.current.quality;
+        }
+        currentScanEvalRef.current = null; // Clear ref
+
+        // 3. Write it into the graph state and save it
+        const idx = next.index;
+        if (typeof idx === 'number' && allFensRef.current[idx] && currentGameIdRef.current) {
+          const newData = [...graphDataRef.current];
+          while (newData.length <= idx) newData.push({ move: newData.length, eval: 0, quality: 'normal' });
+
+          newData[idx] = { move: idx, eval: score, quality: quality, analyzed: true };
+
+          const processedData = postProcessGraphData(newData, allFensRef.current);
+          graphDataRef.current = processedData;
+
+          if (branchingPoint === null || idx <= branchingPoint) {
+            const mainData = [...originalGraphDataRef.current];
+            if (mainData[idx]) {
+              mainData[idx] = { ...mainData[idx], eval: score, quality: quality, analyzed: true };
+              originalGraphDataRef.current = postProcessGraphData(mainData, allFensRef.current);
+            }
+          }
+
+          setGraphData([...processedData]);
+
+          const localKey = `analysis_${currentGameIdRef.current}`;
+          const evalData = processedData.filter(d => d.analyzed).map(d => ({ move: d.move, eval: d.eval, quality: d.quality }));
+          localStorage.setItem(localKey, JSON.stringify({ evaluations: evalData }));
+
+          if (idx % 5 === 0 || scanQueueRef.current.length === 0) {
+             fetch('/api/save-analysis', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({
+                 gameId: currentGameIdRef.current,
+                 evaluations: evalData,
+                 pgn: (window as any).lastPgn,
+                 white: players.white,
+                 black: players.black,
+                 analysisDepth: scanDepth
+               })
+             }).catch(err => console.error('Failed to save analysis to server', err));
+          }
+        }
+
+        // 4. Reset scanning state and schedule next scan with a short delay (200ms) to allow backend spawn
         isScanningRef.current = false;
         setIsScanning(false);
-        processNextScan();
+        setTimeout(() => {
+          processNextScan();
+        }, 200);
       }, 10000);
     }
   }, []);
